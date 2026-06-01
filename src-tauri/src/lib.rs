@@ -46,6 +46,23 @@ fn ssh_target(host: &str) -> String {
     if host.contains('@') { host.to_string() } else { format!("pi@{}", host) }
 }
 
+/// Tell the native SSH pool which credentials to use for `host`.
+/// Frontend calls this once after loading the values the user typed
+/// into the Settings modal (`ppe.pi-user`, `ppe.pi-pw`), before any
+/// other ssh_* command. Optional — if not called, the pool tries
+/// the PinnerPi factory default `pi/pi` and then falls back to a key
+/// in ~/.ssh/.
+#[tauri::command]
+fn ssh_set_credentials(
+    host: String,
+    user: String,
+    password: Option<String>,
+    pool: tauri::State<'_, ssh::SshPool>,
+) -> Result<(), String> {
+    pool.set_credentials(&host, user, password);
+    Ok(())
+}
+
 /// Execute a single command on the Pi over SSH.
 /// Native russh path (no `ssh.exe` spawn) — see `ssh.rs` for the
 /// connection-pool + exec-with-retry impl.
@@ -1146,6 +1163,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            ssh_set_credentials,
             ssh_run, ssh_get_base64, ssh_list_dir, scp_get_text,
             read_local_text, list_local_dirs, local_path_exists, log_line,
             remote_dir_size, local_cache_size,

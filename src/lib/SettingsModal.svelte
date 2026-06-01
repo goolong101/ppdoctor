@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { sshApplyStoredCredentials } from "./api";
+
   let { open = $bindable(false) }: { open?: boolean } = $props();
 
   let ip = $state(localStorage.getItem("ppe.pi-ip") ?? "");
@@ -8,11 +10,18 @@
   let showPw = $state(false);
   let saved = $state(false);
 
-  function save() {
+  async function save() {
     localStorage.setItem("ppe.pi-ip", ip.trim());
     localStorage.setItem("ppe.pi-user", username.trim() || "pi");
     localStorage.setItem("ppe.pi-pw", password);
     localStorage.setItem("ppe.cache-dir", cacheDir.trim());
+    // Push the new credentials into the native SSH pool so the very
+    // next ssh_* command uses them. The pool's cache is keyed by
+    // host:port so this just replaces the entry — no reconnect cost
+    // unless the user also changed the IP.
+    if (ip.trim()) {
+      try { await sshApplyStoredCredentials(ip.trim()); } catch { /* ignore */ }
+    }
     saved = true;
     setTimeout(() => (saved = false), 1500);
   }

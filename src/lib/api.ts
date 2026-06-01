@@ -13,7 +13,24 @@ export async function sshRun(host: string, command: string): Promise<SshResult> 
   return await invoke<SshResult>("ssh_run", { host, command });
 }
 
+/**
+ * Send the user-configured SSH credentials to the native pool. Pulls
+ * username from `ppe.pi-user` (default "pi") and password from
+ * `ppe.pi-pw` (default "pi"). Call once before any other ssh_* op —
+ * Connect.svelte does this on every connect attempt, and the
+ * SettingsModal calls it again when the user saves changed values.
+ *
+ * Idempotent: calling repeatedly with the same values is a cheap
+ * HashMap insert in the pool; nothing reconnects.
+ */
+export async function sshApplyStoredCredentials(host: string): Promise<void> {
+  const user = (localStorage.getItem("ppe.pi-user") ?? "pi").trim() || "pi";
+  const password = localStorage.getItem("ppe.pi-pw") ?? "pi";
+  await invoke("ssh_set_credentials", { host, user, password });
+}
+
 export async function sshTest(host: string): Promise<boolean> {
+  await sshApplyStoredCredentials(host);
   const r = await sshRun(host, "echo OK");
   return r.ok && r.stdout.trim() === "OK";
 }
