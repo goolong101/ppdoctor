@@ -15,10 +15,10 @@
 // already match on the Pi — useful for partial updates where only
 // pinnerpi_sdl changed.
 
+use crate::ssh;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::process::Command;
 
 const PPDOCTOR_REPO: &str = "goolong101/ppdoctor";
 const PPENHANCER_REPO: &str = "goolong101/ppenhancer";
@@ -148,51 +148,14 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
-// ─── SSH helpers (mirror lib.rs's ssh_target/ssh_run patterns) ───────
+// ─── SSH helpers (delegated to the native russh pool in ssh.rs) ──────
 
-fn ssh_target(host: &str) -> String {
-    if host.contains('@') {
-        host.to_string()
-    } else {
-        format!("pi@{}", host)
+async fn ssh_capture(pool: &ssh::SshPool, host: &str, command: &str) -> Result<String, String> {
+    let r = ssh::exec(pool, host, command).await?;
+    if !r.ok {
+        return Err(r.stderr.trim().to_string());
     }
-}
-
-fn ssh_capture(host: &str, command: &str) -> Result<String, String> {
-    let target = ssh_target(host);
-    let output = Command::new("ssh")
-        .arg("-o").arg("ConnectTimeout=10")
-        .arg("-o").arg("BatchMode=yes")
-        .arg("-o").arg("StrictHostKeyChecking=accept-new")
-        .arg(&target)
-        .arg(command)
-        .output()
-        .map_err(|e| format!("ssh spawn: {}", e))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-fn scp_put(host: &str, local: &std::path::Path, remote: &str) -> Result<(), String> {
-    let target = format!("{}:{}", ssh_target(host), remote);
-    let output = Command::new("scp")
-        .arg("-o").arg("ConnectTimeout=10")
-        .arg("-o").arg("BatchMode=yes")
-        .arg("-o").arg("StrictHostKeyChecking=accept-new")
-        .arg(local)
-        .arg(&target)
-        .output()
-        .map_err(|e| format!("scp spawn: {}", e))?;
-    if !output.status.success() {
-        return Err(format!(
-            "scp {} → {}: {}",
-            local.display(),
-            remote,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    Ok(())
+    Ok(r.stdout.trim().to_string())
 }
 
 // ─── Tauri commands ──────────────────────────────────────────────────
@@ -214,10 +177,16 @@ pub fn check_self_update() -> Result<UpdateCheckResult, String> {
 }
 
 /// Compare the Pi's installed PinnerPi version (`/home/pi/PinnerPi/VERSION`)
-/// against ppenhancer's latest GitHub release. SSH-key auth, BatchMode.
+/// against ppenhancer's latest GitHub release. Uses the held-open native
+/// SSH pool (see ssh.rs) so this is one ~3 ms cat over an existing
+/// channel rather than a 200-500 ms ssh.exe spawn + fresh TCP handshake.
 #[tauri::command]
-pub fn check_pi_update(host: String) -> Result<UpdateCheckResult, String> {
-    let installed = ssh_capture(&host, "cat /home/pi/PinnerPi/VERSION 2>/dev/null || echo 0.0.0")
+pub async fn check_pi_update(
+    host: String,
+    pool: tauri::State<'_, ssh::SshPool>,
+) -> Result<UpdateCheckResult, String> {
+    let installed = ssh_capture(&pool, &host, "cat /home/pi/PinnerPi/VERSION 2>/dev/null || echo 0.0.0")
+        .await
         .unwrap_or_else(|_| "0.0.0".to_string());
     let installed = if installed.is_empty() {
         "0.0.0".to_string()
@@ -250,7 +219,10 @@ pub fn check_pi_update(host: String) -> Result<UpdateCheckResult, String> {
 ///
 /// Returns an InstallReport so the UI can show what changed.
 #[tauri::command]
-pub fn install_pi_update(host: String) -> Result<InstallReport, String> {
+pub async fn install_pi_update(
+    host: String,
+    pool: tauri::State<'_, ssh::SshPool>,
+) -> Result<InstallReport, String> {
     let (_tag, _html, _body, assets) = fetch_latest_release(PPENHANCER_REPO)?;
 
     let sums_url = assets
@@ -279,7 +251,6 @@ pub fn install_pi_update(host: String) -> Result<InstallReport, String> {
 
     let mut updated = Vec::new();
     let mut skipped = Vec::new();
-    let tmp_dir = std::env::temp_dir();
 
     for (asset_name, expected_hash) in &expected {
         let pi_path = match pi_target_path(asset_name) {
@@ -289,12 +260,14 @@ pub fn install_pi_update(host: String) -> Result<InstallReport, String> {
 
         // Get current Pi-side hash (empty if file doesn't exist).
         let cur_hash = ssh_capture(
+            &pool,
             &host,
             &format!(
                 "[ -f {} ] && sha256sum {} | awk '{{print $1}}' || echo none",
                 pi_path, pi_path
             ),
         )
+        .await
         .unwrap_or_else(|_| "none".to_string())
         .to_lowercase();
 
@@ -316,16 +289,14 @@ pub fn install_pi_update(host: String) -> Result<InstallReport, String> {
             ));
         }
 
-        // SCP via temp file.
-        let tmp = tmp_dir.join(format!("ppe_update_{}_{}", std::process::id(), asset_name));
-        std::fs::write(&tmp, &bytes).map_err(|e| format!("write temp {}: {}", asset_name, e))?;
-        let res = scp_put(&host, &tmp, pi_path);
-        let _ = std::fs::remove_file(&tmp);
-        res?;
+        // SFTP-upload directly to the Pi target path. Native russh path
+        // means no temp file + scp.exe spawn — bytes go straight over
+        // the held-open session.
+        ssh::sftp_write(&pool, &host, pi_path, &bytes).await?;
 
         // chmod +x for the binaries.
         if asset_name == "pinnerpi_sdl" || asset_name == "pinnerpi_power_daemon" {
-            ssh_capture(&host, &format!("chmod +x {}", pi_path))?;
+            ssh_capture(&pool, &host, &format!("chmod +x {}", pi_path)).await?;
         }
 
         updated.push(asset_name.clone());
@@ -333,13 +304,14 @@ pub fn install_pi_update(host: String) -> Result<InstallReport, String> {
 
     // Only restart the service if something actually changed.
     let service_restarted = if !updated.is_empty() {
-        ssh_capture(&host, "sudo systemctl restart pinnerpi.service")?;
+        ssh_capture(&pool, &host, "sudo systemctl restart pinnerpi.service").await?;
         true
     } else {
         false
     };
 
-    let final_version = ssh_capture(&host, "cat /home/pi/PinnerPi/VERSION 2>/dev/null || echo unknown")
+    let final_version = ssh_capture(&pool, &host, "cat /home/pi/PinnerPi/VERSION 2>/dev/null || echo unknown")
+        .await
         .unwrap_or_else(|_| "unknown".to_string());
 
     Ok(InstallReport {

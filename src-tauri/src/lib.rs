@@ -6,6 +6,7 @@
 
 mod db;
 mod sync;
+mod ssh;
 mod updates;
 use db::*;
 use sync::*;
@@ -13,6 +14,24 @@ use updates::*;
 
 use serde::Serialize;
 use std::process::Command;
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// Build a `Command` that does NOT show a console window on Windows.
+/// Used for every non-SSH external program (ffmpeg, ffprobe, python,
+/// powershell, etc.) so end users don't see cmd-prompt flashes when
+/// PP Doctor probes for tools or runs the transcode pipeline.
+fn quiet_cmd<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
+    let mut c = Command::new(program);
+    #[cfg(windows)]
+    {
+        c.creation_flags(CREATE_NO_WINDOW);
+    }
+    c
+}
 
 #[derive(Serialize)]
 struct SshResult {
@@ -28,119 +47,83 @@ fn ssh_target(host: &str) -> String {
 }
 
 /// Execute a single command on the Pi over SSH.
+/// Native russh path (no `ssh.exe` spawn) — see `ssh.rs` for the
+/// connection-pool + exec-with-retry impl.
 #[tauri::command]
-fn ssh_run(host: String, command: String) -> Result<SshResult, String> {
-    let target = ssh_target(&host);
-    let output = Command::new("ssh")
-        .arg("-o").arg("ConnectTimeout=10")
-        .arg("-o").arg("BatchMode=yes")
-        .arg("-o").arg("StrictHostKeyChecking=accept-new")
-        .arg(&target)
-        .arg(&command)
-        .output()
-        .map_err(|e| format!("failed to spawn ssh: {}", e))?;
-
+async fn ssh_run(
+    host: String,
+    command: String,
+    pool: tauri::State<'_, ssh::SshPool>,
+) -> Result<SshResult, String> {
+    let r = ssh::exec(&pool, &host, &command).await?;
     Ok(SshResult {
-        ok: output.status.success(),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        exit_code: output.status.code().unwrap_or(-1),
+        ok: r.ok,
+        stdout: r.stdout,
+        stderr: r.stderr,
+        exit_code: r.exit_code,
     })
 }
 
-/// Fetch a remote file as base64. Uses `base64 < <file>` on the Pi (coreutils
-/// is always installed), so we don't have to deal with binary-over-stdout.
-/// Returns the base64 string, or an empty string if the file doesn't exist.
+/// Fetch a remote file as base64. Now uses SFTP under the hood for
+/// raw bytes, then base64-encodes locally — eliminates the `base64`
+/// command roundtrip and a process spawn.
 #[tauri::command]
-fn ssh_get_base64(host: String, remote_path: String) -> Result<String, String> {
-    let target = ssh_target(&host);
-    // Single-quote-escape the path to handle spaces; reject backticks/dollars for safety.
-    if remote_path.contains('`') || remote_path.contains('$') {
-        return Err("path contains forbidden chars".into());
+async fn ssh_get_base64(
+    host: String,
+    remote_path: String,
+    pool: tauri::State<'_, ssh::SshPool>,
+) -> Result<String, String> {
+    // SFTP open will surface ENOENT-style errors; treat "no such file" as
+    // an empty result (matches the prior `|| true` shell semantics).
+    match ssh::sftp_read(&pool, &host, &remote_path).await {
+        Ok(bytes) => {
+            use base64::Engine;
+            Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+        }
+        Err(e) if e.to_lowercase().contains("no such file") => Ok(String::new()),
+        Err(e) => Err(e),
     }
-    let cmd = format!("[ -f '{}' ] && base64 -w0 '{}' || true", remote_path, remote_path);
-    let output = Command::new("ssh")
-        .arg("-o").arg("ConnectTimeout=10")
-        .arg("-o").arg("BatchMode=yes")
-        .arg("-o").arg("StrictHostKeyChecking=accept-new")
-        .arg(&target)
-        .arg(&cmd)
-        .output()
-        .map_err(|e| format!("ssh: {}", e))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// List files (non-directories) in a remote directory. Returns one filename per line.
+/// List files (non-directories) in a remote directory. Returns one
+/// filename per line. Uses an exec rather than SFTP listdir because the
+/// frontend wants type=file filtering and follows symlinks like the
+/// previous `find` did.
 #[tauri::command]
-fn ssh_list_dir(host: String, remote_path: String) -> Result<Vec<String>, String> {
+async fn ssh_list_dir(
+    host: String,
+    remote_path: String,
+    pool: tauri::State<'_, ssh::SshPool>,
+) -> Result<Vec<String>, String> {
     if remote_path.contains('`') || remote_path.contains('$') {
         return Err("path contains forbidden chars".into());
     }
-    let target = ssh_target(&host);
-    // -1 = one entry per line; -A = include dotfiles except . and ..; filter to files only.
     let cmd = format!(
         "[ -d '{}' ] && (cd '{}' && find . -maxdepth 1 -type f -printf '%f\\n' 2>/dev/null) || true",
         remote_path, remote_path
     );
-    let output = Command::new("ssh")
-        .arg("-o").arg("ConnectTimeout=10")
-        .arg("-o").arg("BatchMode=yes")
-        .arg("-o").arg("StrictHostKeyChecking=accept-new")
-        .arg(&target)
-        .arg(&cmd)
-        .output()
-        .map_err(|e| format!("ssh: {}", e))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+    let r = ssh::exec(&pool, &host, &cmd).await?;
+    if !r.ok {
+        return Err(r.stderr);
     }
-    Ok(String::from_utf8_lossy(&output.stdout)
+    Ok(r.stdout
         .lines()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect())
 }
 
-/// SCP a remote file to a local temp file and return its contents as text.
-/// Much faster than ssh_get_base64 for big files (no inflation, raw binary
-/// transfer). Used for .directb2s (~5-200 MB XML).
+/// SFTP-read a remote file as UTF-8 text. Used for .directb2s
+/// (~5-200 MB XML). Native SFTP replaces the prior SCP-to-temp-file
+/// dance — no temp files, no process spawn.
 #[tauri::command]
-fn scp_get_text(host: String, remote_path: String) -> Result<String, String> {
-    if remote_path.contains('`') || remote_path.contains('$') {
-        return Err("path contains forbidden chars".into());
-    }
-    let target_path = format!("{}:{}", ssh_target(&host), remote_path);
-    let tmp_dir = std::env::temp_dir();
-    let tmp = tmp_dir.join(format!(
-        "ppe_fetch_{}_{}.tmp",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
-    ));
-
-    let output = Command::new("scp")
-        .arg("-o").arg("BatchMode=yes")
-        .arg("-o").arg("StrictHostKeyChecking=accept-new")
-        .arg("-o").arg("ConnectTimeout=10")
-        .arg(&target_path)
-        .arg(&tmp)
-        .output()
-        .map_err(|e| format!("scp spawn failed: {}", e))?;
-
-    if !output.status.success() {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(format!(
-            "scp failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-
-    let text = std::fs::read_to_string(&tmp)
-        .map_err(|e| format!("read temp file: {}", e))?;
-    let _ = std::fs::remove_file(&tmp);
-    Ok(text)
+async fn scp_get_text(
+    host: String,
+    remote_path: String,
+    pool: tauri::State<'_, ssh::SshPool>,
+) -> Result<String, String> {
+    let bytes = ssh::sftp_read(&pool, &host, &remote_path).await?;
+    String::from_utf8(bytes).map_err(|e| format!("file is not valid UTF-8: {}", e))
 }
 
 /// Read a local file as UTF-8 text. Used for the .directb2s sources that
@@ -178,24 +161,20 @@ fn local_path_exists(path: String) -> bool {
 /// Total size in bytes of a remote directory (recursive). Uses `du -sb`
 /// so it works on any Pi shell. ~1-2 sec roundtrip on a typical cabinet.
 #[tauri::command]
-fn remote_dir_size(host: String, remote_path: String) -> Result<i64, String> {
+async fn remote_dir_size(
+    host: String,
+    remote_path: String,
+    pool: tauri::State<'_, ssh::SshPool>,
+) -> Result<i64, String> {
     if remote_path.contains('`') || remote_path.contains('$') {
         return Err("path contains forbidden chars".into());
     }
-    let target = ssh_target(&host);
     let cmd = format!("du -sb '{}' 2>/dev/null | awk '{{print $1}}'", remote_path);
-    let output = Command::new("ssh")
-        .arg("-o").arg("ConnectTimeout=10")
-        .arg("-o").arg("BatchMode=yes")
-        .arg("-o").arg("StrictHostKeyChecking=accept-new")
-        .arg(&target)
-        .arg(&cmd)
-        .output()
-        .map_err(|e| format!("ssh: {}", e))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+    let r = ssh::exec(&pool, &host, &cmd).await?;
+    if !r.ok {
+        return Err(r.stderr);
     }
-    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let s = r.stdout.trim();
     s.parse::<i64>().map_err(|e| format!("parse '{}': {}", s, e))
 }
 
@@ -434,13 +413,14 @@ fn list_cache_versions(
 /// Returns the list of paths removed (with "local:"/"remote:" prefix), same
 /// format as reset_to_b2s_default for status display.
 #[tauri::command]
-fn delete_cache_file(
+async fn delete_cache_file(
     host: String,
     pi_folder: String,
     slot: String,
     filename: String,
     cache_root: Option<String>,
     also_delete_thumb: Option<bool>,
+    pool: tauri::State<'_, ssh::SshPool>,
 ) -> Result<Vec<String>, String> {
     let mut removed: Vec<String> = vec![];
     let primary = cache_file_path_internal(&host, &pi_folder, &slot, &filename, cache_root.as_deref());
@@ -498,14 +478,8 @@ fn delete_cache_file(
     } else {
         format!("for f in '{}'; do [ -f \"$f\" ] && rm -fv \"$f\"; done", remote_primary)
     };
-    let ssh_target = ssh_target(&host);
-    let out = std::process::Command::new("ssh")
-        .args(["-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no"])
-        .arg(&ssh_target)
-        .arg(&rm_cmd)
-        .output()
-        .map_err(|e| format!("ssh spawn: {}", e))?;
-    for line in String::from_utf8_lossy(&out.stdout).lines() {
+    let r = ssh::exec(&pool, &host, &rm_cmd).await?;
+    for line in r.stdout.lines() {
         let t = line.trim();
         if !t.is_empty() { removed.push(format!("remote:{}", t)); }
     }
@@ -621,7 +595,7 @@ fn ffmpeg_path() -> String {
 /// True iff `ffmpeg` (bundled or PATH) is callable.
 #[tauri::command]
 fn ffmpeg_available() -> bool {
-    let probe = std::process::Command::new(resolve_tool("ffmpeg"))
+    let probe = quiet_cmd(resolve_tool("ffmpeg"))
         .arg("-version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -630,7 +604,7 @@ fn ffmpeg_available() -> bool {
 }
 
 fn detect_source_fps(src: &str) -> Option<f64> {
-    let out = std::process::Command::new(resolve_tool("ffprobe"))
+    let out = quiet_cmd(resolve_tool("ffprobe"))
         .args([
             "-v", "0",
             "-select_streams", "v:0",
@@ -744,7 +718,7 @@ fn transcode_video_to_cache(
     // choice — it disables AQ / mbtree / lookahead which left the first
     // GOP visibly pixelated, especially at the loop boundary. We just want
     // a B-frame-free Main-profile stream with normal rate-control behavior.
-    let status = std::process::Command::new(resolve_tool("ffmpeg"))
+    let status = quiet_cmd(resolve_tool("ffmpeg"))
         .args([
             "-hide_banner", "-loglevel", "error", "-y",
             "-i", &src_path,
@@ -849,10 +823,11 @@ fn is_droppable_media_filename(filename: &str, slot: &str) -> bool {
 }
 
 #[tauri::command]
-fn reset_to_b2s_default(
+async fn reset_to_b2s_default(
     host: String,
     pi_folder: String,
     cache_root: Option<String>,
+    pool: tauri::State<'_, ssh::SshPool>,
 ) -> Result<Vec<String>, String> {
     let mut removed: Vec<String> = vec![];
     // 1. Local mirror: walk default_image and default_video, delete primary
@@ -912,15 +887,8 @@ fn reset_to_b2s_default(
            do [ -f \"$f\" ] && rm -fv \"$f\"; done",
         remote
     );
-    let ssh_target = ssh_target(&host);
-    let out = std::process::Command::new("ssh")
-        .args(["-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no"])
-        .arg(&ssh_target)
-        .arg(&rm_cmd)
-        .output()
-        .map_err(|e| format!("ssh spawn: {}", e))?;
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    for line in stdout.lines() {
+    let r = ssh::exec(&pool, &host, &rm_cmd).await?;
+    for line in r.stdout.lines() {
         let trimmed = line.trim();
         if !trimmed.is_empty() { removed.push(format!("remote:{}", trimmed)); }
     }
@@ -949,7 +917,7 @@ fn resolve_python() -> std::path::PathBuf {
     // Try `python` first (Windows installer convention)
     for name in &["python", "python3"] {
         let exe_name = if cfg!(windows) { format!("{}.exe", name) } else { name.to_string() };
-        if let Ok(out) = std::process::Command::new(&exe_name).arg("--version").output() {
+        if let Ok(out) = quiet_cmd(&exe_name).arg("--version").output() {
             if out.status.success() { return std::path::PathBuf::from(name); }
         }
     }
@@ -990,7 +958,7 @@ fn scaffold_b2s_from_png(
         return Err(format!("scaffold script not found: {}", script.display()));
     }
     let py = resolve_python();
-    let mut cmd = std::process::Command::new(&py);
+    let mut cmd = quiet_cmd(&py);
     cmd.arg(&script).arg(&png_path).arg(&output_directb2s);
     if let Some(t) = threshold     { cmd.arg("--threshold").arg(t.to_string()); }
     if let Some(a) = min_area      { cmd.arg("--min-area").arg(a.to_string()); }
@@ -1067,7 +1035,7 @@ $g.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
 $bmp.Save('{}', [System.Drawing.Imaging.ImageFormat]::Png)
 $g.Dispose(); $bmp.Dispose()
 "#, path.replace('\\', "/").replace('\'', "''"));
-    let output = Command::new("powershell")
+    let output = quiet_cmd("powershell")
         .arg("-NoProfile")
         .arg("-NonInteractive")
         .arg("-Command").arg(&script)
@@ -1114,6 +1082,11 @@ fn log_line(text: String) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .manage(DbState::new())
+        // Held-open SSH session pool (one TCP+auth handshake per host,
+        // reused for all subsequent exec/sftp calls). Replaces the prior
+        // `Command::new("ssh")` shell-out pattern — no console-window
+        // flashes, no Windows OpenSSH dependency, 5-10× faster bulk sync.
+        .manage(ssh::SshPool::new())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             use tauri::{

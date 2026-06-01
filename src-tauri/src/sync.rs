@@ -18,14 +18,19 @@ use tauri::Emitter;
 use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x00004000;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-/// Spawn a Command with reduced OS priority so SCP storms don't starve the
-/// foreground UI process. No-op on non-Windows (Tauri targets Windows here).
+/// Spawn a Command with reduced OS priority and no console window.
+/// `CREATE_NO_WINDOW` suppresses the cmd-prompt flash that ssh.exe /
+/// scp.exe / their relatives normally show on each spawn — eliminates
+/// the "OpenSSH processes flashing in the background" experience the
+/// user sees during sync flows. No-op on non-Windows.
 fn low_prio_cmd(bin: &str) -> Command {
     let mut c = Command::new(bin);
     #[cfg(windows)]
     {
-        c.creation_flags(BELOW_NORMAL_PRIORITY_CLASS);
+        c.creation_flags(BELOW_NORMAL_PRIORITY_CLASS | CREATE_NO_WINDOW);
     }
     c
 }

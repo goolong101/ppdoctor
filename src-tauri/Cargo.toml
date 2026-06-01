@@ -28,3 +28,18 @@ base64 = "0.22"
 ureq = { version = "2", features = ["json", "tls"], default-features = false }
 sha2 = "0.10"
 hex = "0.4"
+# Native SSH client (replaces shelling out to ssh.exe).
+# - russh = pure Rust SSH-2, single self-contained binary; no Windows
+#   OpenSSH dependency, no console-window spawns per call.
+# - russh-keys = OpenSSH key file loading (id_ed25519, id_rsa).
+# - russh-sftp = SFTP subsystem on top of russh, replaces shelling
+#   out to scp.exe with file transfer over the same TCP+auth handshake.
+# - tokio = async runtime (Tauri 2 already pulls this in transitively).
+# - async-trait = trait async fns on stable.
+# - parking_lot = lighter Mutex for the connection pool than std's.
+russh = "0.45"
+russh-keys = "0.45"
+russh-sftp = "2"
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+parking_lot = "0.12"
