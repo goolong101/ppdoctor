@@ -2,10 +2,32 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import Logo from "./Logo.svelte";
   import SettingsModal from "./SettingsModal.svelte";
+  import UpdatesModal from "./UpdatesModal.svelte";
+  import { checkSelfUpdate, checkPiUpdate } from "./api";
 
   const appWindow = getCurrentWindow();
   let isMaximized = $state(false);
   let settingsOpen = $state(false);
+  let updatesOpen = $state(false);
+
+  // Background update probe on app launch. Sets the dot badge if either
+  // channel has a newer release. Failures are silent — a 404 (no
+  // ppdoctor release yet) or an offline cabinet must not block the UI.
+  let hasUpdate = $state(false);
+  $effect(() => {
+    void (async () => {
+      try {
+        const r = await checkSelfUpdate();
+        if (r.has_update) hasUpdate = true;
+      } catch { /* ignore */ }
+      const ip = localStorage.getItem("ppe.pi-ip") ?? "";
+      if (!ip) return;
+      try {
+        const r = await checkPiUpdate(ip);
+        if (r.has_update) hasUpdate = true;
+      } catch { /* ignore */ }
+    })();
+  });
 
   appWindow.isMaximized().then(v => (isMaximized = v));
   appWindow.onResized(async () => { isMaximized = await appWindow.isMaximized(); });
@@ -36,10 +58,24 @@
     </svg>
   </button>
 
-  <!-- Bloom tuning button removed 2026-05-25 — global bloom controls
-       replaced by per-table B2S adjustments (right sidebar in tables view)
-       and image-bloom adjustments (also per-table). Global bloomState
-       defaults still live in bloom.svelte.ts as fallback. -->
+  <!-- Updates -->
+  <button
+    onclick={() => (updatesOpen = true)}
+    class="relative w-7 h-7 flex items-center justify-center rounded-md
+           text-zinc-400 hover:text-amber-300 hover:bg-white/8 transition-colors"
+    aria-label="Updates"
+    title="Updates"
+  >
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/>
+      <polyline points="21 3 21 8 16 8"/>
+    </svg>
+    {#if hasUpdate}
+      <!-- Amber dot in top-right when either channel reports has_update.
+           Implicit dismissal: opening the modal acks the notification. -->
+      <span class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+    {/if}
+  </button>
 
   <!-- Drag-region filler -->
   <div data-tauri-drag-region class="flex-1 h-full"></div>
@@ -83,3 +119,4 @@
 </div>
 
 <SettingsModal bind:open={settingsOpen} />
+<UpdatesModal bind:open={updatesOpen} />
