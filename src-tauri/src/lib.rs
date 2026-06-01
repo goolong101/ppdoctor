@@ -6,8 +6,10 @@
 
 mod db;
 mod sync;
+mod updates;
 use db::*;
 use sync::*;
+use updates::*;
 
 use serde::Serialize;
 use std::process::Command;
@@ -1190,7 +1192,8 @@ pub fn run() {
             db_upsert_updates, db_available_updates_count,
             db_get_setting, db_set_setting,
             db_audit_essentials,
-            sync_push_dirty, sync_pull_table, sync_pull_all, sync_prune_non_essential
+            sync_push_dirty, sync_pull_table, sync_pull_all, sync_prune_non_essential,
+            check_self_update, check_pi_update, install_pi_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

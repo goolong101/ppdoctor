@@ -443,6 +443,44 @@ export async function onSyncProgress(handler: (p: SyncProgress) => void): Promis
   return await listen<SyncProgress>("sync:progress", (e) => handler(e.payload));
 }
 
+// ─── Update checks ────────────────────────────────────────────────
+// PP Doctor self-update + Pi-side ppenhancer update.
+// Both repos are public on GitHub; anonymous HTTP, no PAT needed.
+// has_update is the only field the UI usually cares about.
+
+export interface UpdateCheckResult {
+  installed: string;
+  latest: string;
+  has_update: boolean;
+  release_url: string;
+  release_notes: string;
+}
+
+export interface InstallReport {
+  files_updated: string[];
+  files_skipped: string[];
+  service_restarted: boolean;
+  final_version: string;
+}
+
+/** Is there a newer PP Doctor release on GitHub than what's running? */
+export async function checkSelfUpdate(): Promise<UpdateCheckResult> {
+  return await invoke<UpdateCheckResult>("check_self_update");
+}
+
+/** Is there a newer ppenhancer release than what's on this Pi? Reads VERSION via SSH. */
+export async function checkPiUpdate(host: string): Promise<UpdateCheckResult> {
+  return await invoke<UpdateCheckResult>("check_pi_update", { host });
+}
+
+/**
+ * Install the latest ppenhancer release on the Pi.
+ * Per-file SHA256 check skips unchanged files; restart only if any changed.
+ */
+export async function installPiUpdate(host: string): Promise<InstallReport> {
+  return await invoke<InstallReport>("install_pi_update", { host });
+}
+
 /** Build a data: URL from a base64 string with mime-type inferred from extension. */
 export function dataUrlFor(filename: string, base64: string): string {
   if (!base64) return "";
