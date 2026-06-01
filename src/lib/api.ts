@@ -314,6 +314,15 @@ export async function dbDirtyFiles(): Promise<DbMediaFile[]> {
   return await invoke<DbMediaFile[]>("db_dirty_files");
 }
 
+/**
+ * Count media_files rows where local_size IS NOT NULL.
+ * Zero = this cabinet has never had a sync_pull run for it → fresh cab,
+ * connect screen flags it so /tables auto-triggers a first-time bulk sync.
+ */
+export async function dbSyncedCount(): Promise<number> {
+  return await invoke<number>("db_synced_count");
+}
+
 export async function dbMarkDirty(tableId: number, slot: string, filename: string): Promise<void> {
   // DIAGNOSTIC: log every dbMarkDirty call with a JS stack frame so we can
   // tell who's marking what during a drop / save / resync. Captures the

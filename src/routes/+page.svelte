@@ -47,6 +47,16 @@
   function enterApp(enableCache: boolean) {
     cacheEnabled = enableCache;
     localStorage.setItem("ppe.cache-enabled", String(enableCache));
+    // First-time-sync trigger. If the user chose to use the cache AND
+    // there is currently NO local cache (localSize == 0), this is the
+    // first connect to this cab — the /tables page reads this session
+    // flag and shows the blocking FirstSyncModal that runs sync_pull_all
+    // before the user starts navigating tables. Avoids the
+    // "cold cache, every navigation falls through to SSH" experience.
+    // Cleared by FirstSyncModal once the sync completes.
+    if (enableCache && (localSize ?? 0) === 0) {
+      sessionStorage.setItem("ppe.first-sync-host", ip.trim());
+    }
     goto("/tables");
   }
 </script>

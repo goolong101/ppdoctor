@@ -1186,7 +1186,7 @@ pub fn run() {
             take_screenshot, write_state_dump,
             db_open, db_upsert_tables, db_get_tables,
             db_replace_media, db_get_media, db_get_all_media,
-            db_dirty_count, db_dirty_files,
+            db_dirty_count, db_dirty_files, db_synced_count,
             db_mark_dirty, db_clear_dirty,
             db_create_snapshot, db_list_snapshots, db_delete_snapshot,
             db_upsert_updates, db_available_updates_count,

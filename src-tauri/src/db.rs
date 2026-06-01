@@ -263,6 +263,24 @@ pub fn db_dirty_count(state: tauri::State<'_, DbState>) -> Result<i64, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Count rows in media_files where local_size IS NOT NULL. Used by the
+/// Connect screen to decide whether this cabinet has ever been
+/// pulled-into-cache before: a zero count means a fresh cab and we
+/// auto-trigger sync_pull_all on first entry to /tables instead of
+/// leaving the user with a cold cache and SSH-on-demand for every
+/// table they navigate to.
+#[tauri::command]
+pub fn db_synced_count(state: tauri::State<'_, DbState>) -> Result<i64, String> {
+    let g = state.conn.lock().unwrap();
+    let conn = g.as_ref().ok_or("db not open")?;
+    conn.query_row(
+        "SELECT COUNT(*) FROM media_files WHERE local_size IS NOT NULL",
+        [],
+        |r| r.get(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn db_dirty_files(state: tauri::State<'_, DbState>) -> Result<Vec<DbMediaFile>, String> {
     let g = state.conn.lock().unwrap();
