@@ -61,19 +61,20 @@
   <!-- Updates -->
   <button
     onclick={() => (updatesOpen = true)}
-    class="relative w-7 h-7 flex items-center justify-center rounded-md
-           text-zinc-400 hover:text-amber-300 hover:bg-white/8 transition-colors"
-    aria-label="Updates"
-    title="Updates"
+    class="relative h-7 flex items-center justify-center rounded-md
+           transition-colors gap-1.5
+           {hasUpdate
+             ? 'px-2 text-amber-300 bg-amber-400/15 hover:bg-amber-400/25 font-semibold'
+             : 'w-7 text-zinc-400 hover:text-amber-300 hover:bg-white/8'}"
+    aria-label={hasUpdate ? "Updates available" : "Updates"}
+    title={hasUpdate ? "Updates available" : "Updates"}
   >
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/>
       <polyline points="21 3 21 8 16 8"/>
     </svg>
     {#if hasUpdate}
-      <!-- Amber dot in top-right when either channel reports has_update.
-           Implicit dismissal: opening the modal acks the notification. -->
-      <span class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+      <span class="text-xs leading-none">Updates available</span>
     {/if}
   </button>
 
