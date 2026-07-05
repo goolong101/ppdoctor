@@ -107,7 +107,7 @@ fn find_ssh_key() -> Result<PathBuf, String> {
 
 /// One live session per host. Held behind an `AsyncMutex` because the
 /// underlying `Handle<H>` channel calls are not Sync.
-struct Session {
+pub(crate) struct Session {
     handle: Handle<ClientHandler>,
 }
 
@@ -319,7 +319,7 @@ fn is_stale(err: &str) -> bool {
 
 async fn exec_once(pool: &SshPool, host: &str, command: &str) -> Result<SshResult, String> {
     let session = pool.get(host).await?;
-    let mut s = session.lock().await;
+    let s = session.lock().await;
 
     let mut channel = s
         .handle

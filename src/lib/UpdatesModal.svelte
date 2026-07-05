@@ -129,7 +129,7 @@
 
         <div class="border-t border-white/8"></div>
 
-        <!-- Pi-side ppenhancer update -->
+        <!-- Pi-side ppdoctor update -->
         <section>
           <div class="flex items-center justify-between mb-2">
             <h3 class="text-xs uppercase tracking-wider text-zinc-400">PinnerPi (Pi Zero)</h3>

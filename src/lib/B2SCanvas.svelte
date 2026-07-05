@@ -92,14 +92,14 @@
   // evt changes (because base was a plain `let`), and we couldn't tell from
   // the UI alone whether the bulb step had executed.
   let base = $state<HTMLImageElement | ImageBitmap | null>(null);
-  let baseW = 1920;
-  let baseH = 1080;
+  let baseW = $state(1920);
+  let baseH = $state(1080);
   /** Grill/DMD strip pixels at the bottom of source coords that should be
    *  hidden — mirrors Pi renderer's `useH = sourceHeight - grillHeight` crop
    *  (renderer.cpp:5168-5192). Tables like BALLY Attack from Mars (grill=377)
    *  author the DMD/speakers inside the base image; without this crop the
    *  strip leaks through under the actual backglass. */
-  let grillH = 0;
+  let grillH = $state(0);
   /** `true` when `base` is the raw uncropped source PNG (decoded from
    *  .directb2s XML — needs a srcRect crop at draw time). `false` when `base`
    *  is the pre-cropped+stretched 1920×1080 bitmap from .b2scache (writer

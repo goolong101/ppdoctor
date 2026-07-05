@@ -1,4 +1,4 @@
-// PPEnhancer — PinnerPi cabinet manager
+// PPDoctor — PinnerPi cabinet manager
 //
 // Rust backend exposes Tauri commands that shell out to Windows OpenSSH for
 // all Pi interactions. Auth is key-based (BatchMode=yes); users push their key
@@ -40,10 +40,6 @@ struct SshResult {
     stderr: String,
     #[serde(rename = "exitCode")]
     exit_code: i32,
-}
-
-fn ssh_target(host: &str) -> String {
-    if host.contains('@') { host.to_string() } else { format!("pi@{}", host) }
 }
 
 /// Tell the native SSH pool which credentials to use for `host`.
@@ -649,6 +645,9 @@ fn transcode_video_to_cache(
     filename: String,
     src_path: String,
     cache_root: Option<String>,
+    target_fps: Option<u32>,
+    crf: Option<u32>,
+    maxrate: Option<String>,
 ) -> Result<u64, String> {
     if !ffmpeg_available() {
         return Err(format!(
@@ -662,20 +661,18 @@ fn transcode_video_to_cache(
     }
     backup_existing(&dst)?;
 
-    // Always target 30 fps CFR for Pi V4L2 M2M consistency. Low-fps sources
-    // (24, 23.976, 25) get motion-blend interpolation to fill in tween
-    // frames — eliminates the judder you get from naive frame duplication.
-    // High-fps sources (60, 50) get downsampled. mi_mode=blend is the
-    // pragmatic choice: faster than mci (motion-compensated, slow + can
-    // ghost), better than dup (visible judder). For mostly-static
-    // backglass content, blend produces clean tween frames.
     let src_fps = detect_source_fps(&src_path).unwrap_or(30.0);
-    let target_fps: u32 = 30;
+    let target_fps: u32 = target_fps.unwrap_or(24);
+    let crf_val = crf.unwrap_or(19);
+    let maxrate_str = maxrate.unwrap_or_else(|| "3M".to_string());
+    let bufsize_str = format!("{}M", {
+        let m: u32 = maxrate_str.trim_end_matches('M').parse().unwrap_or(3);
+        m * 2
+    });
     let gop = target_fps.to_string();
-    let vf_interpolate: String = if src_fps < 29.5 {
+    let vf_interpolate: String = if src_fps < (target_fps as f64 - 0.5) {
         format!("minterpolate=fps={}:mi_mode=blend,", target_fps)
     } else {
-        // Source already ≥30 fps — drop frames cleanly via fps filter.
         format!("fps={},", target_fps)
     };
     // ALWAYS output 1920×1080. Earlier this filter used
@@ -760,19 +757,24 @@ fn transcode_video_to_cache(
             "-bf", "0", "-refs", "1",
             "-sc_threshold", "0",
             "-g", &gop, "-keyint_min", &gop,
-            "-crf", "19",
-            "-maxrate", "3M", "-bufsize", "6M",
+            "-crf", &crf_val.to_string(),
+            "-maxrate", &maxrate_str, "-bufsize", &bufsize_str,
             "-movflags", "+faststart",
             "-c:a", "aac", "-b:a", "128k",
             "-ac", "2",
         ])
         .arg(&tmp)
         .args([
-            // ── Output 2: 960×540 thumb (single frame) ─────────────────
+            // ── Output 2: 1920×1080 thumb (single frame) ────────────────
+            // Renderer takes a FAST 1080p-direct path on .thumb.jpg files
+            // that are already 1920×1080 (saves 200-700ms SoftStretchLinear
+            // upscale per transition). Matches reencode_thumbs_1080p.sh's
+            // batch output. Stretch to 16:9 (no letterbox) to mirror the
+            // main video transcode above.
             "-map", "0:v:0",
-            "-vf", "scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(960-iw)/2:(540-ih)/2:color=black",
+            "-vf", "scale=1920:1080:flags=lanczos",
             "-frames:v", "1",
-            "-q:v", "4",          // JPEG quality ~85, matches Pi's THUMB_JPEG_QUALITY=70 ballpark
+            "-q:v", "10",         // ~60-220KB files, ~50% faster decode on Pi Zero than Q4
             "-pix_fmt", "yuvj420p",
             "-f", "image2",
         ])
@@ -1073,12 +1075,12 @@ fn write_state_dump(path: String, content: String) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| e.to_string())
 }
 
-/// Append a line to C:/tmp/ppenhancer.log. Used for cross-process debugging
+/// Append a line to C:/tmp/ppdoctor.log. Used for cross-process debugging
 /// — tail this file from an external terminal to see what the app is doing.
 #[tauri::command]
 fn log_line(text: String) -> Result<(), String> {
     use std::io::Write;
-    let path = std::path::Path::new("C:/tmp/ppenhancer.log");
+    let path = std::path::Path::new("C:/tmp/ppdoctor.log");
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -1122,7 +1124,7 @@ pub fn run() {
 
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("PP Doctor — PPEnhancer cabinet manager")
+                .tooltip("PP Doctor — PPDoctor cabinet manager")
                 .menu(&menu)
                 .show_menu_on_left_click(false) // left-click = focus window, right-click = menu
                 .on_menu_event(|app, event| match event.id.as_ref() {

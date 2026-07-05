@@ -311,7 +311,7 @@ pub fn db_mark_dirty(table_id: i64, slot: String, filename: String, state: tauri
     // wrapper log we get full coverage of WHO marks WHAT dirty when.
     // Remove once the multi-file-push mystery is resolved (2026-05-26).
     use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("C:/tmp/ppenhancer.log") {
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("C:/tmp/ppdoctor.log") {
         let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis()).unwrap_or(0);
         let _ = writeln!(f, "[{}] [RUST mark_dirty] T{} {}/{}", ts, table_id, slot, filename);

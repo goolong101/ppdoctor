@@ -108,18 +108,6 @@ fn ssh_target(host: &str) -> String {
     if host.contains('@') { host.to_string() } else { format!("pi@{}", host) }
 }
 
-/// Path to the SSH ControlMaster socket for a host — a single persistent
-/// connection that all subsequent scp/ssh calls reuse. Eliminates the
-/// per-file handshake overhead (~500ms-1s per call) that dominates small-file
-/// transfers over slow Wi-Fi.
-fn control_path(host: &str) -> std::path::PathBuf {
-    let bare = host.split('@').last().unwrap_or(host);
-    let safe: String = bare.chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '.')
-        .collect();
-    std::env::temp_dir().join(format!("ppd_ssh_{}.sock", safe))
-}
-
 /// Common SSH options for every scp/ssh call inside the sync loop.
 ///
 /// ControlMaster was originally enabled here to share one persistent connection
@@ -752,11 +740,11 @@ pub fn sync_pull_all(
         total, diag_skipped, diag_transferred, diag_no_pi_meta, diag_no_local,
         diag_mismatch_size, diag_mismatch_mtime, first_mismatch_log
     );
-    if let Some(parent) = std::path::Path::new("C:/tmp/ppenhancer.log").parent() {
+    if let Some(parent) = std::path::Path::new("C:/tmp/ppdoctor.log").parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("C:/tmp/ppenhancer.log") {
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("C:/tmp/ppdoctor.log") {
         let _ = writeln!(f, "[{}] {}",
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0),
             summary);

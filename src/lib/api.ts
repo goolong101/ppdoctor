@@ -237,12 +237,16 @@ export async function resetToB2sDefault(host: string, piFolder: string, cacheRoo
   });
 }
 
-/** Re-encode a dropped video into Pi-Zero-friendly H.264 mp4 (1080p, 24/30
- *  fps based on source, +faststart). Synchronous — resolves when done.
- *  Throws if ffmpeg isn't installed. */
+/** Re-encode a dropped video into Pi-Zero-friendly H.264 mp4 (1080p,
+ *  configurable fps/crf/maxrate, +faststart). Synchronous — resolves when
+ *  done. Throws if ffmpeg isn't installed. */
 export async function transcodeVideoToCache(host: string, piFolder: string, slot: string, filename: string, srcPath: string, cacheRoot?: string | null): Promise<number> {
+  const targetFps = parseInt(localStorage.getItem("ppe.encode-fps") ?? "24") || 24;
+  const crf = parseInt(localStorage.getItem("ppe.encode-crf") ?? "19") || 19;
+  const maxrate = localStorage.getItem("ppe.encode-maxrate") ?? "3M";
   return await invoke<number>("transcode_video_to_cache", {
-    host, piFolder, slot, filename, srcPath, cacheRoot: cacheRoot || null
+    host, piFolder, slot, filename, srcPath, cacheRoot: cacheRoot || null,
+    targetFps, crf, maxrate,
   });
 }
 
@@ -265,7 +269,7 @@ export function fmtBytes(bytes: number): string {
   return `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
 }
 
-/** Append a line to C:/tmp/ppenhancer.log AND console.log it. Best-effort. */
+/** Append a line to C:/tmp/ppdoctor.log AND console.log it. Best-effort. */
 export async function log(tag: string, msg: string, data?: any): Promise<void> {
   const full = data !== undefined
     ? `${tag} ${msg} ${typeof data === "string" ? data : JSON.stringify(data)}`
@@ -344,7 +348,7 @@ export async function dbMarkDirty(tableId: number, slot: string, filename: strin
   // DIAGNOSTIC: log every dbMarkDirty call with a JS stack frame so we can
   // tell who's marking what during a drop / save / resync. Captures the
   // function name of the caller + a synthetic timestamp prefix that's
-  // grep-friendly in C:/tmp/ppenhancer.log. Remove once the 8-file
+  // grep-friendly in C:/tmp/ppdoctor.log. Remove once the 8-file
   // mystery is resolved (2026-05-26).
   const e = new Error();
   const stack = (e.stack ?? "").split("\n").slice(2, 5).join(" <- ").replace(/^\s+/, "");
@@ -470,7 +474,7 @@ export async function onSyncProgress(handler: (p: SyncProgress) => void): Promis
 }
 
 // ─── Update checks ────────────────────────────────────────────────
-// PP Doctor self-update + Pi-side ppenhancer update.
+// PP Doctor self-update + Pi-side ppdoctor update.
 // Both repos are public on GitHub; anonymous HTTP, no PAT needed.
 // has_update is the only field the UI usually cares about.
 
@@ -494,13 +498,13 @@ export async function checkSelfUpdate(): Promise<UpdateCheckResult> {
   return await invoke<UpdateCheckResult>("check_self_update");
 }
 
-/** Is there a newer ppenhancer release than what's on this Pi? Reads VERSION via SSH. */
+/** Is there a newer ppdoctor release than what's on this Pi? Reads VERSION via SSH. */
 export async function checkPiUpdate(host: string): Promise<UpdateCheckResult> {
   return await invoke<UpdateCheckResult>("check_pi_update", { host });
 }
 
 /**
- * Install the latest ppenhancer release on the Pi.
+ * Install the latest ppdoctor release on the Pi.
  * Per-file SHA256 check skips unchanged files; restart only if any changed.
  */
 export async function installPiUpdate(host: string): Promise<InstallReport> {

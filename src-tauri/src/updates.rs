@@ -3,7 +3,7 @@
 // Two update channels:
 //   1. ppdoctor (self) — compares Cargo.toml version against
 //      github.com/goolong101/ppdoctor latest release tag.
-//   2. ppenhancer (Pi) — compares /home/pi/PinnerPi/VERSION on the
+//   2. ppdoctor (Pi) — compares /home/pi/PinnerPi/VERSION on the
 //      user's cabinet against github.com/goolong101/ppenhancer latest
 //      release tag, then installs by downloading individual release
 //      assets and SCP'ing them to their target paths on the Pi.
@@ -24,7 +24,7 @@ const PPDOCTOR_REPO: &str = "goolong101/ppdoctor";
 const PPENHANCER_REPO: &str = "goolong101/ppenhancer";
 const USER_AGENT: &str = "pp-doctor-updater";
 
-/// Where each ppenhancer release asset lands on the Pi.
+/// Where each ppdoctor release asset lands on the Pi.
 /// Binaries go under build/, configs at the repo root.
 fn pi_target_path(asset_name: &str) -> Option<&'static str> {
     match asset_name {
@@ -177,7 +177,7 @@ pub fn check_self_update() -> Result<UpdateCheckResult, String> {
 }
 
 /// Compare the Pi's installed PinnerPi version (`/home/pi/PinnerPi/VERSION`)
-/// against ppenhancer's latest GitHub release. Uses the held-open native
+/// against ppdoctor's latest GitHub release. Uses the held-open native
 /// SSH pool (see ssh.rs) so this is one ~3 ms cat over an existing
 /// channel rather than a 200-500 ms ssh.exe spawn + fresh TCP handshake.
 #[tauri::command]
@@ -203,7 +203,7 @@ pub async fn check_pi_update(
     })
 }
 
-/// Install the latest ppenhancer release on the Pi.
+/// Install the latest ppdoctor release on the Pi.
 ///
 /// Algorithm:
 ///   1. Fetch release JSON → asset list (incl. SHA256SUMS).

@@ -34,6 +34,19 @@
   let q = $state("");
 
   let selectedId = $state<number | null>(null);
+
+  // Keep the keyboard-selected row visible. The table list uses
+  // content-visibility:auto to skip rendering off-screen rows (scales to 1000+
+  // tables), so arrow-key selection can land on an unpainted row — scroll it
+  // into view minimally. Deferred one frame so the DOM reflects the new
+  // selection (and the row is realized) before we scroll to it.
+  $effect(() => {
+    const id = selectedId;
+    if (id == null) return;
+    requestAnimationFrame(() => {
+      document.querySelector(`[data-tid="${id}"]`)?.scrollIntoView({ block: "nearest" });
+    });
+  });
   /** Unified "auto preview" toggle. ONE state drives whatever the active
    *  default is: B2S → render B2SCanvas with attract animation; video →
    *  auto-load the <video> element; image → bloom canvas animation
@@ -431,6 +444,7 @@
     if (filename === "backglass.b2s_base.thumb.jpg") return false; // cache thumb
     if (filename.endsWith(".thumb.jpg")) return false;          // any auto-thumb
     if (filename === "glow_config.json") return false;          // edited via UI later
+    if (filename === "active.json") return false;               // renderer-side control file
     return true;
   }
 
@@ -1644,6 +1658,41 @@
         if (first) selectedId = first.id;
       }
 
+      // Hydrate activeFileMap from cached active.json so left-column badges
+      // reflect the Pi's actual state, not stale localStorage. Runs in the
+      // background — UI shows winner-priority badges first, then upgrades
+      // as each table's active.json is read from the local cache. Reactive
+      // via the activeFileMap reassignment so badges refresh in place.
+      void (async () => {
+        const updates: Record<number, string> = {};
+        // Parallelize but cap concurrency so the IPC channel doesn't choke.
+        const POOL = 16;
+        let cursor = 0;
+        async function worker() {
+          while (cursor < tables.length) {
+            const t = tables[cursor++];
+            if (!t.folder) continue;
+            // Video active.json takes precedence — that's the same priority
+            // the renderer applies when picking a winner.
+            try {
+              const vCfg = await readActiveConfig(t.folder, "default_video");
+              if (vCfg.video) { updates[t.id] = vCfg.video; continue; }
+            } catch {}
+            try {
+              const iCfg = await readActiveConfig(t.folder, "default_image");
+              if (iCfg.directb2s) { updates[t.id] = "__b2s__"; continue; }
+              if (iCfg.image)     { updates[t.id] = iCfg.image; continue; }
+            } catch {}
+          }
+        }
+        await Promise.all(Array.from({ length: POOL }, worker));
+        // Single reassignment triggers reactivity once instead of N times.
+        // Merge with existing in-memory choices so a freshly-clicked radio
+        // (post-scan, in-memory) isn't clobbered by a stale cache read.
+        activeFileMap = { ...updates, ...activeFileMap };
+        log("[active/hydrate]", `synced ${Object.keys(updates).length} table active.json values from cache`);
+      })();
+
       // Persist to SQLite so next session loads instantly (and so the sync
       // engine has a media_files inventory to walk).
       try {
@@ -2839,6 +2888,12 @@
         return;
       }
     }
+    // Narrow + defend: ensureCompositeForWand() may report ok without
+    // populating pixels (e.g. race/partial extract) — never flood-fill null.
+    if (!genB2sCompositePixels) {
+      genB2sStatus = "Wand couldn't build the composite — reload video preview";
+      return;
+    }
     const blob = magicWandFloodFill(
       genB2sCompositePixels,
       genB2sCompositeW, genB2sCompositeH,
@@ -3841,6 +3896,8 @@
                        ? 'bg-amber-400/10 border-amber-400'
                        : 'border-transparent hover:bg-white/3'}
                      {!t.folder ? 'opacity-40' : ''}"
+              style="content-visibility:auto;contain-intrinsic-size:auto 44px"
+              data-tid={t.id}
             >
               <button
                 onclick={() => (selectedId = t.id)}
@@ -4004,6 +4061,10 @@
                          action menu opens. Bulb visuals (boxes + marching
                          ants + labels) are pointer-events:none — purely
                          visual. -->
+                    <!-- svelte-ignore a11y_click_events_have_key_events -->
+                    <!-- Spatial pixel-picker: the flood-fill needs the exact
+                         cursor (x,y); there is no keyboard equivalent to
+                         "click this pixel", so no onkeydown is meaningful. -->
                     <div
                       class="absolute inset-0 z-10 cursor-crosshair"
                       onclick={onMagicWandClick}

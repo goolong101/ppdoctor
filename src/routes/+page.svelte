@@ -69,7 +69,7 @@
         <Logo size={36} />
         <h1 class="text-3xl font-semibold tracking-tight">PP Doctor</h1>
       </div>
-      <p class="text-sm text-zinc-400">House call for your PPEnhancer cabinet · media · b2s · updates</p>
+      <p class="text-sm text-zinc-400">House call for your PPDoctor cabinet · media · b2s · updates</p>
     </div>
 
     {#if phase === "connect"}

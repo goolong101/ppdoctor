@@ -5,7 +5,7 @@
 
 #[test]
 #[ignore]
-fn check_ppenhancer_latest_release() {
+fn check_ppdoctor_latest_release() {
     let url = "https://api.github.com/repos/goolong101/ppenhancer/releases/latest";
     let resp = ureq::get(url)
         .set("User-Agent", "pp-doctor-updater-test")
