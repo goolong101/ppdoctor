@@ -77,13 +77,17 @@ fn is_essential_file(filename: &str) -> bool {
     // Backglass cache (PP Doctor primary source)
     if filename == "backglass.b2scache" { return true; }
     if filename == "backglass.b2s_base.thumb.jpg" { return true; }
-    // Event map
-    if filename == "b2s_event_map.json" { return true; }
+    // Event map (any slot: b2s_event_map.json + <table>_event_map.json)
+    if filename.ends_with("event_map.json") { return true; }
+    // Active-file pointer — tiny, but it's the source of truth for which
+    // media (video / image / b2s) is the table's default. PP Doctor reads it
+    // to decide what the preview shows, so it must be mirrored locally even
+    // though it's hidden from the file list.
+    if filename == "active.json" { return true; }
     // Glow cache (small, derived locally if missing — but keep if present)
     if filename.ends_with(".glow") { return true; }
     // Skip everything else: backglass.directb2s (heavy XML, fallback only),
-    // any default_video/* (PP Doctor doesn't preview video right now),
-    // legacy artifacts.
+    // large default_video/*.mp4 (streamed on demand for preview), legacy artifacts.
     false
 }
 

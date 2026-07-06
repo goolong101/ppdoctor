@@ -315,6 +315,12 @@ fn is_stale(err: &str) -> bool {
         || lower.contains("broken pipe")
         || lower.contains("connection aborted")
         || lower.contains("not connected")
+        // russh returns these when the session's event loop has already ended
+        // (Pi rebooted / NAT/idle timeout dropped the TCP). Opening a channel on
+        // that dead session fails with "Channel send error" — reconnect + retry.
+        || lower.contains("channel send error")
+        || lower.contains("connection closed")
+        || lower.contains("eof while reading")
 }
 
 async fn exec_once(pool: &SshPool, host: &str, command: &str) -> Result<SshResult, String> {

@@ -17,6 +17,9 @@ tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Raw LZ4 block codec for the .b2scache writer — output is LZ4_compress_default
+# compatible (what the Pi's LZ4_decompress_safe / lz4js reader expects).
+lz4_flex = { version = "0.11", default-features = false, features = ["std"] }
 # bundled = compile SQLite from source — no system dep, single-exe ship
 rusqlite = { version = "0.32", features = ["bundled"] }
 dirs = "5"

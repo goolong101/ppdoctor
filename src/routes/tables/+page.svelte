@@ -439,12 +439,15 @@
 
   /** Files we hide from the user-facing file list — internal cache / config. */
   function isUserFacing(filename: string): boolean {
-    if (filename === "b2s_event_map.json") return false;
-    if (filename === "backglass.b2scache") return false;        // cache, not source
-    if (filename === "backglass.b2s_base.thumb.jpg") return false; // cache thumb
-    if (filename.endsWith(".thumb.jpg")) return false;          // any auto-thumb
-    if (filename === "glow_config.json") return false;          // edited via UI later
-    if (filename === "active.json") return false;               // renderer-side control file
+    const lower = filename.toLowerCase();
+    // Support/derived files that must never show in the media list. Matched by
+    // suffix (not exact name) because most are table-prefixed, e.g.
+    // Bally_Black_Rose_PP_event_map.json / Bally_Black_Rose_PP.directb2s.
+    if (lower.endsWith(".thumb.jpg")) return false;    // auto-thumbs (b2s + video)
+    if (lower.endsWith("event_map.json")) return false; // b2s_event_map.json + <table>_event_map.json
+    if (lower.endsWith(".b2scache")) return false;      // b2s cache, not source
+    if (filename === "glow_config.json") return false;  // edited via UI later
+    if (filename === "active.json") return false;       // renderer-side control file
     return true;
   }
 
@@ -462,14 +465,17 @@
       const hit = imgs.find(f => f.toLowerCase().endsWith("." + ext) && isUserFacing(f));
       if (hit) return hit;
     }
-    // No user image — if there's a B2S cache, that's the de-facto backglass; we
-    // represent it by the thumb in the list (or no entry if no thumb).
+    // No user image — video wins over b2s, matching the Pi renderer's
+    // fallback priority (renderer.cpp:3062 "video → image → b2s"). So a
+    // table with both a video and a b2s previews the video, like the cabinet.
+    const v = vids.find(f => /\.(mp4|webm|mkv|mov|avi)$/i.test(f));
+    if (v) return v;
+    // Otherwise the B2S cache is the de-facto backglass; represent it by the
+    // synthetic "__b2s__" line (handled in the template).
     if (imgs.includes("backglass.b2scache") || imgs.includes("backglass.directb2s")) {
-      // Show the B2S as a synthetic "file" line — handled in template.
       return "__b2s__";
     }
-    const v = vids.find(f => /\.(mp4|webm|mkv|mov|avi)$/i.test(f));
-    return v ?? null;
+    return null;
   }
 
   /** Persisted per-table active-file selection. localStorage key is the
@@ -848,13 +854,16 @@
       `This cannot be undone.`
     )) return;
     try {
-      const { deleteCacheFile, dbClearDirty } = await import("$lib/api");
+      const { deleteCacheFile, dbDeleteMedia } = await import("$lib/api");
       const removed = await deleteCacheFile(sshHost(), folder, slot, filename, isVideo, cacheDir());
       log("[delete-file]", `${slot}/${filename}: removed ${removed.length} entries`);
-      // Wipe in-memory file list + clear DB row dirty flag
+      // Wipe in-memory file list + the DB ROW (not just its dirty flag — else
+      // navigating away and back re-reads the surviving row and the file
+      // reappears) + the detailCache entry (same reason, in-memory).
       if (slot === "default_image") imageFiles = imageFiles.filter(f => f !== filename);
       else                          videoFiles = videoFiles.filter(f => f !== filename);
-      try { await dbClearDirty(id, slot, filename); } catch {}
+      try { await dbDeleteMedia(id, slot, filename); } catch {}
+      detailCache.delete(id);
       // If we just deleted the active file, fall back to whatever
       // pickActiveFile picks (b2s if available, else first remaining file).
       if (activeFile === filename) {
@@ -1021,7 +1030,22 @@
     const slot = "default_image";
     dropStatus = `Writing ${(bytes.length/1024).toFixed(0)} KB as ${namedFilename}…`;
     await cacheWriteBinary(sshHost(), folder, slot, namedFilename, bytes, cacheDir());
-    await dbMarkDirty(tableId, slot, namedFilename);
+    // Cache-only cabinet: the .directb2s stays in the local mirror for editing but
+    // is NOT marked dirty (not pushed to the Pi). PP Doctor generates
+    // backglass.b2scache here on the PC and pushes THAT — keeping the source off
+    // the cabinet is what lets the Pi trust the PC-made cache without a mtime
+    // re-check. See docs/b2scache_writer_spec.md.
+    try {
+      dropStatus = "Generating b2scache…";
+      const { parseDirectB2S } = await import("$lib/b2s");
+      const { generateAndWriteB2sCache } = await import("$lib/b2s_cache_writer");
+      const doc = parseDirectB2S(new TextDecoder().decode(bytes));
+      const n = await generateAndWriteB2sCache(doc, bytes, tableId, sshHost(), folder, cacheDir());
+      log("[b2scache]", `generated ${Math.round(n / 1024)} KB for table ${tableId}`);
+    } catch (e) {
+      log("[b2scache]", `generation failed: ${e}`);
+      dropError = `b2scache generation failed: ${e}`;
+    }
     dropStatus = `Marking ${namedFilename} as active…`;
     await writeActiveConfig(tableId, folder, slot, { directb2s: namedFilename });
     await refreshDirtyTables();
@@ -1188,16 +1212,19 @@
     )) return;
     resetBusy = true;
     try {
-      const { resetToB2sDefault, dbClearDirty } = await import("$lib/api");
+      const { resetToB2sDefault, dbDeleteMedia } = await import("$lib/api");
       const removed = await resetToB2sDefault(sshHost(), folder, cacheDir());
       log("[reset]", `table=${id} removed ${removed.length} entries`);
-      // Clear DB rows for the deleted slots
+      // Delete the DB rows for the removed files (not just clear their dirty
+      // flag — else navigating away and back re-reads the rows and the files
+      // reappear) + invalidate the in-memory detailCache for the same reason.
       for (const fname of [...imageFiles, ...videoFiles]) {
         const slot = imageFiles.includes(fname) ? "default_image" : "default_video";
         if (/\.(jpg|jpeg|png|webp|gif|bgra|bmp|mp4|webm|mkv|mov|m4v)$/i.test(fname)) {
-          try { await dbClearDirty(id, slot, fname); } catch {}
+          try { await dbDeleteMedia(id, slot, fname); } catch {}
         }
       }
+      detailCache.delete(id);
       // Wipe in-memory file lists, reset active to b2s
       imageFiles = imageFiles.filter(f => !/\.(jpg|jpeg|png|webp|gif|bgra|bmp)$/i.test(f));
       videoFiles = videoFiles.filter(f => !/\.(mp4|webm|mkv|mov|m4v)$/i.test(f));
@@ -1791,7 +1818,11 @@
   // a <div> — Svelte 5 restricts {@const} to immediate children of control
   // blocks ({#if}, {#each}, etc.).
   let userImages = $derived(imageFiles.filter(isUserFacing));
-  let userVideos = $derived(videoFiles);
+  // Also drop the video-slot .directb2s (a video-companion b2s, shown via the
+  // B2S row) — but NOT the regular backglass .directb2s in the image slot.
+  let userVideos = $derived(
+    videoFiles.filter(f => isUserFacing(f) && !f.toLowerCase().endsWith(".directb2s"))
+  );
   // showingVideo decides whether the preview pane renders the <video>.
   // Priority:
   //   1. User explicitly picked a video file as active (radio click /

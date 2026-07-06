@@ -341,6 +341,20 @@ pub fn db_clear_dirty(table_id: i64, slot: String, filename: String, state: taur
     Ok(())
 }
 
+/// Delete a single media_files row. Used when a file is deleted from the Pi +
+/// mirror so it doesn't survive in the DB and reappear on navigate-back or a
+/// dirty-preserving rescan (db_replace_media only prunes dirty=0 rows).
+#[tauri::command]
+pub fn db_delete_media(table_id: i64, slot: String, filename: String, state: tauri::State<'_, DbState>) -> Result<(), String> {
+    let g = state.conn.lock().unwrap();
+    let conn = g.as_ref().ok_or("db not open")?;
+    conn.execute(
+        "DELETE FROM media_files WHERE table_id = ?1 AND slot = ?2 AND filename = ?3",
+        params![table_id, slot, filename]
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // ─── Snapshots (save / restore) ──────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]

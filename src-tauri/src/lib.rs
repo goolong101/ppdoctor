@@ -8,9 +8,11 @@ mod db;
 mod sync;
 mod ssh;
 mod updates;
+mod b2scache;
 use db::*;
 use sync::*;
 use updates::*;
+use b2scache::generate_b2scache;
 
 use serde::Serialize;
 use std::process::Command;
@@ -1180,7 +1182,8 @@ pub fn run() {
             db_open, db_upsert_tables, db_get_tables,
             db_replace_media, db_get_media, db_get_all_media,
             db_dirty_count, db_dirty_files, db_synced_count,
-            db_mark_dirty, db_clear_dirty,
+            db_mark_dirty, db_clear_dirty, db_delete_media,
+            generate_b2scache,
             db_create_snapshot, db_list_snapshots, db_delete_snapshot,
             db_upsert_updates, db_available_updates_count,
             db_get_setting, db_set_setting,

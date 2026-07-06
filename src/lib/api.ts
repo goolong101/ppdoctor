@@ -360,6 +360,12 @@ export async function dbClearDirty(tableId: number, slot: string, filename: stri
   return await invoke<void>("db_clear_dirty", { tableId, slot, filename });
 }
 
+/** Remove a single media_files row entirely (used when a file is deleted, so it
+ *  doesn't reappear on navigate-back or a partial refresh). */
+export async function dbDeleteMedia(tableId: number, slot: string, filename: string): Promise<void> {
+  return await invoke<void>("db_delete_media", { tableId, slot, filename });
+}
+
 // ─── Snapshots (save / restore) ──────────────────────────────────────────────
 
 export interface Snapshot {

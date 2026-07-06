@@ -127,7 +127,7 @@
     <div class="glass rounded-2xl p-7">
       <div class="text-center mb-5">
         <div class="text-emerald-300 text-sm mb-1">✓ Connected to {ip}</div>
-        <div class="text-xs text-zinc-500">Choose how to manage media</div>
+        <div class="text-xs text-zinc-500">Sync cabinet media to this PC</div>
       </div>
 
       <!-- Cabinet stats -->
@@ -144,32 +144,25 @@
         </div>
       </div>
 
-      <!-- Mode pickers -->
-      <div class="space-y-2 mb-4">
-        <button
-          onclick={() => enterApp(false)}
-          class="w-full text-left p-3 rounded-lg border border-white/8 hover:border-amber-400/40 hover:bg-white/3 transition-colors"
-        >
-          <div class="flex items-center justify-between mb-0.5">
-            <span class="text-sm font-medium text-zinc-100">Lightweight</span>
-            <span class="text-[10px] text-zinc-500">Recommended</span>
-          </div>
-          <div class="text-xs text-zinc-400">
-            Metadata + thumbnails only (~50&nbsp;MB). Previews fetch on demand.
-          </div>
-        </button>
-
+      <!-- Full local mirror (single action) -->
+      <div class="mb-4">
+        <div class="text-xs text-zinc-400 mb-3 px-0.5 leading-relaxed">
+          Pulls every file to this PC for instant previews + offline editing.
+          {#if (localSize ?? 0) === 0}
+            The first sync copies {remoteSize !== null ? `~${fmtBytes(remoteSize)}` : "everything"} to
+            this PC and can be slow — leave it running; you can use the app as soon as it finishes.
+          {/if}
+        </div>
         <button
           onclick={() => enterApp(true)}
-          class="w-full text-left p-3 rounded-lg border border-white/8 hover:border-amber-400/40 hover:bg-white/3 transition-colors"
+          class="w-full py-3 rounded-xl font-medium
+                 bg-gradient-to-b from-amber-400 to-amber-500
+                 text-amber-950
+                 hover:from-amber-300 hover:to-amber-400
+                 transition-all duration-200
+                 shadow-lg shadow-amber-500/20"
         >
-          <div class="flex items-center justify-between mb-0.5">
-            <span class="text-sm font-medium text-zinc-100">Full local mirror</span>
-            <span class="text-[10px] text-amber-300">{remoteSize !== null ? `~${fmtBytes(remoteSize)}` : ""}</span>
-          </div>
-          <div class="text-xs text-zinc-400">
-            Pull every file to this PC for instant previews + offline editing. Initial sync may take a while.
-          </div>
+          Start
         </button>
       </div>
 
