@@ -132,7 +132,7 @@
         <!-- Pi-side ppdoctor update -->
         <section>
           <div class="flex items-center justify-between mb-2">
-            <h3 class="text-xs uppercase tracking-wider text-zinc-400">PinnerPi (Pi Zero)</h3>
+            <h3 class="text-xs uppercase tracking-wider text-zinc-400">PPEnhancer (Pi Zero)</h3>
             {#if loadingPi}
               <span class="text-xs text-zinc-500">Checking…</span>
             {/if}
