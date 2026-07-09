@@ -21,7 +21,11 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 const PPDOCTOR_REPO: &str = "goolong101/ppdoctor";
-const PPENHANCER_REPO: &str = "goolong101/ppenhancer";
+// PUBLIC OTA artifacts repo (Releases). The source repo `goolong101/ppenhancer`
+// was flipped PRIVATE 2026-07-07, so anonymous release access must use the
+// public `-updates` repo. (The SHA256SUMS/asset comments below predate that
+// split — the mechanism is unchanged, only the repo name moved.)
+const PPENHANCER_REPO: &str = "goolong101/ppenhancer-updates";
 const USER_AGENT: &str = "pp-doctor-updater";
 
 /// Where each ppdoctor release asset lands on the Pi.
@@ -32,6 +36,9 @@ fn pi_target_path(asset_name: &str) -> Option<&'static str> {
         "pinnerpi_power_daemon" => Some("/home/pi/PinnerPi/build/pinnerpi_power_daemon"),
         "commands.json" => Some("/home/pi/PinnerPi/commands.json"),
         "pinball_tables.json" => Some("/home/pi/PinnerPi/pinball_tables.json"),
+        "apply_wifi.sh" => Some("/home/pi/PinnerPi/apply_wifi.sh"),
+        "pinnerpi-launcher.sh" => Some("/home/pi/PinnerPi/pinnerpi-launcher.sh"),
+        "refresh_golden.sh" => Some("/home/pi/PinnerPi/refresh_golden.sh"),
         "VERSION" => Some("/home/pi/PinnerPi/VERSION"),
         _ => None,
     }
@@ -294,9 +301,26 @@ pub async fn install_pi_update(
         // the held-open session.
         ssh::sftp_write(&pool, &host, pi_path, &bytes).await?;
 
-        // chmod +x for the binaries.
-        if asset_name == "pinnerpi_sdl" || asset_name == "pinnerpi_power_daemon" {
+        // chmod +x for binaries and shell scripts.
+        if asset_name == "pinnerpi_sdl"
+            || asset_name == "pinnerpi_power_daemon"
+            || asset_name.ends_with(".sh")
+        {
             ssh_capture(&pool, &host, &format!("chmod +x {}", pi_path)).await?;
+        }
+
+        // The daemon execs the ROOT ./pinnerpi_sdl, not build/pinnerpi_sdl (the
+        // __golden restore keeps them paired). Mirror the new binary to the root
+        // path or the update wouldn't take effect — the daemon would keep
+        // running the stale root copy. See the pinnerpi binary/golden rules.
+        if asset_name == "pinnerpi_sdl" {
+            ssh_capture(
+                &pool,
+                &host,
+                "cp -f /home/pi/PinnerPi/build/pinnerpi_sdl /home/pi/PinnerPi/pinnerpi_sdl \
+                 && chmod +x /home/pi/PinnerPi/pinnerpi_sdl",
+            )
+            .await?;
         }
 
         updated.push(asset_name.clone());
@@ -309,6 +333,31 @@ pub async fn install_pi_update(
     } else {
         false
     };
+
+    // Refresh __golden to the just-installed runtime — but ONLY after the
+    // service comes back healthy, so the crash-loop auto-restore reverts to the
+    // version we installed rather than a stale one. If the service isn't active,
+    // leave __golden untouched (it stays as the safe fallback). Best-effort:
+    // never fail the install over a golden refresh, and no-op on cabs that don't
+    // yet have refresh_golden.sh.
+    if service_restarted {
+        let active = ssh_capture(
+            &pool,
+            &host,
+            "sleep 4; systemctl is-active pinnerpi.service 2>/dev/null || echo inactive",
+        )
+        .await
+        .unwrap_or_default();
+        if active == "active" {
+            let _ = ssh_capture(
+                &pool,
+                &host,
+                "[ -x /home/pi/PinnerPi/refresh_golden.sh ] && \
+                 sudo /home/pi/PinnerPi/refresh_golden.sh || true",
+            )
+            .await;
+        }
+    }
 
     let final_version = ssh_capture(&pool, &host, "cat /home/pi/PinnerPi/VERSION 2>/dev/null || echo unknown")
         .await
