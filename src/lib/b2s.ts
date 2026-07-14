@@ -40,6 +40,15 @@ export interface B2SScore {
   spacing: number;
   playerNo: number;
   startDigit: number;
+  /** Reel colors from ReelLitColor/ReelDarkColor ("R.G.B"); used by the .b2scache
+   *  writer so PBA score-reel tables render the right digit colors. */
+  litR: number;
+  litG: number;
+  litB: number;
+  darkR: number;
+  darkG: number;
+  darkB: number;
+  reelType: string;
 }
 
 /** Authored animation from .directb2s `<Animations>` block. Pi plays these
@@ -245,10 +254,20 @@ export function parseDirectB2S(xml: string): B2SDoc {
   const scores: B2SScore[] = [];
   const scoresNode = root.querySelector(":scope > Scores");
   if (scoresNode) {
+    // "R.G.B" (dot-separated, clamped 0-255) — matches the Pi's parseColor
+    // (b2s_parser.cpp:194-196). Absent/malformed → 0,0,0.
+    const parseColor = (s: string | null): [number, number, number] => {
+      const parts = (s ?? "").split(".");
+      if (parts.length !== 3) return [0, 0, 0];
+      const clamp = (n: number) => (Number.isFinite(n) ? Math.max(0, Math.min(255, n)) : 0);
+      return [clamp(parseInt(parts[0], 10)), clamp(parseInt(parts[1], 10)), clamp(parseInt(parts[2], 10))];
+    };
     for (const el of Array.from(scoresNode.children)) {
       if (el.tagName !== "Score") continue;
       const parent = el.getAttribute("Parent") ?? "Backglass";
       if (parent !== "Backglass") continue;
+      const [litR, litG, litB] = parseColor(el.getAttribute("ReelLitColor"));
+      const [darkR, darkG, darkB] = parseColor(el.getAttribute("ReelDarkColor"));
       scores.push({
         id:        parseInt(el.getAttribute("ID") ?? "0", 10) || 0,
         x:         parseInt(el.getAttribute("LocX") ?? "0", 10) || 0,
@@ -259,6 +278,8 @@ export function parseDirectB2S(xml: string): B2SDoc {
         spacing:   parseInt(el.getAttribute("Spacing") ?? "5", 10) || 5,
         playerNo:    parseInt(el.getAttribute("B2SPlayerNo") ?? "0", 10) || 0,
         startDigit:  parseInt(el.getAttribute("B2SStartDigit") ?? "0", 10) || 0,
+        litR, litG, litB, darkR, darkG, darkB,
+        reelType: el.getAttribute("ReelType") ?? "",
       });
     }
   }

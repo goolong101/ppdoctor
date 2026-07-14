@@ -153,13 +153,14 @@ export async function generateAndWriteB2sCache(
   let o = 0;
   for (const s of spriteBlobs) { sprites.set(s, o); o += s.length; }
 
-  // b2s.ts doesn't parse score reel colors → sane defaults (scores are rare;
-  // empty on most tables). reel_type unknown → empty string.
+  // Score reels (used by PBA tables) — real colors + reel type from the
+  // .directb2s, so the cabinet renders the right digit colors/style.
   const scores = doc.scores.map((s) => ({
     id: s.id, x: s.x, y: s.y, w: s.width, h: s.height,
     digits: s.digits, spacing: s.spacing, player_no: s.playerNo, start_digit: s.startDigit,
-    lit_r: 255, lit_g: 255, lit_b: 255, dark_r: 0, dark_g: 0, dark_b: 0,
-    reel_type: "",
+    lit_r: s.litR, lit_g: s.litG, lit_b: s.litB,
+    dark_r: s.darkR, dark_g: s.darkG, dark_b: s.darkB,
+    reel_type: s.reelType,
   }));
 
   const animations = doc.animations.map((a) => ({

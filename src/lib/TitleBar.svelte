@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { getVersion } from "@tauri-apps/api/app";
   import Logo from "./Logo.svelte";
   import SettingsModal from "./SettingsModal.svelte";
   import UpdatesModal from "./UpdatesModal.svelte";
@@ -9,6 +10,8 @@
   let isMaximized = $state(false);
   let settingsOpen = $state(false);
   let updatesOpen = $state(false);
+  let version = $state("");
+  getVersion().then(v => (version = v));
 
   // Background update probe on app launch. Sets the dot badge if either
   // channel has a newer release. Failures are silent — a 404 (no
@@ -42,6 +45,9 @@
   <div data-tauri-drag-region class="flex items-center gap-2">
     <Logo size={18} />
     <span class="font-bold text-sm tracking-tight text-zinc-100">PP Doctor</span>
+    {#if version}
+      <span class="text-[10px] font-mono text-zinc-500 leading-none mt-0.5">v{version}</span>
+    {/if}
   </div>
 
   <!-- Settings -->
