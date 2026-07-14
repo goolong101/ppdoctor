@@ -497,6 +497,8 @@ export interface InstallReport {
   files_skipped: string[];
   service_restarted: boolean;
   final_version: string;
+  /** Running renderer/daemon were hash-verified against the release. */
+  running_verified: boolean;
 }
 
 /** Is there a newer PP Doctor release on GitHub than what's running? */

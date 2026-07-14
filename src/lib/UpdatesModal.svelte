@@ -170,6 +170,7 @@
           {#if report}
             <div class="mt-3 p-3 rounded bg-green-500/10 border border-green-500/20 text-xs text-green-300 space-y-1">
               <div>Service restarted: {report.service_restarted ? "yes" : "no"}</div>
+              <div>Running binaries verified: {report.running_verified ? "yes" : "no"}</div>
               <div>Final version: <span class="font-mono">{report.final_version}</span></div>
               {#if report.files_updated.length > 0}
                 <div>Updated: <span class="font-mono">{report.files_updated.join(", ")}</span></div>
