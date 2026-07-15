@@ -1,6 +1,6 @@
 [package]
 name = "pp-doctor"
-version = "0.1.0"
+version = "0.1.1"
 description = "PP Doctor — Windows manager for PPDoctor cabinets"
 authors = ["PP Doctor"]
 edition = "2021"

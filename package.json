@@ -1,6 +1,6 @@
 {
   "name": "pp-doctor",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "PP Doctor — Windows manager for PPEnhancer cabinets (media, B2S, updates)",
   "type": "module",
   "scripts": {
