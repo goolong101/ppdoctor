@@ -49,6 +49,8 @@ export interface FxEmitterJson {
   twinkle_hz?: number;
   twinkle?: number;
   prewarm_s?: number;
+  /** Whole-emitter brightness breathing. */
+  pulse?: { period_ms?: number; depth?: number };
 }
 
 export interface FxOverlayJson {
@@ -64,6 +66,7 @@ export interface FxOverlayJson {
   sway?: { period_ms?: number; deg?: number };
   bob?: { period_ms?: number; px?: number };
   drift?: { vx?: number; vy?: number; wrap?: boolean };
+  pulse?: { period_ms?: number; depth?: number };
   warp?: { type?: "wave" | "flag" | "bulge" | "jelly"; amp?: number; period_ms?: number; freq?: number };
   mesh?: number;
   /** Sprite-sheet animation: image holds cols×rows frames, `count` used, looped at fps. */
@@ -134,6 +137,7 @@ export interface FxResolved {
   angle: number; spread: number; gravity: number; drag: number; windX: number; windY: number; wander: number;
   sizeMin: number; sizeMax: number; grow: number; aspect: number; align: boolean; rotMin: number; rotMax: number;
   ramp: FxColor[]; alphaCurve: number; alphaMax: number; twinkleHz: number; twinkleAmt: number; prewarmS: number;
+  pulsePeriod: number; pulseDepth: number;
   area: [number, number, number, number] | null; point: [number, number] | null; clip: [number, number, number, number] | null;
 }
 
@@ -193,7 +197,7 @@ export function resolveEmitter(j: FxEmitterJson): FxResolved {
     sizeMin: p?.sizeMin ?? 4, sizeMax: p?.sizeMax ?? 8, grow: p?.grow ?? 0, aspect: p?.aspect ?? 1, align: p?.align ?? false,
     rotMin: p?.rotMin ?? 0, rotMax: p?.rotMax ?? 0, ramp: p?.ramp ?? [[255, 255, 255]],
     alphaCurve: alphaCurveFromName(p?.alpha, 1), alphaMax: p?.alphaMax ?? 1, twinkleHz: p?.twHz ?? 0, twinkleAmt: p?.twAmt ?? 0,
-    prewarmS: p?.prewarm ?? 0, area: null, point: null, clip: null,
+    prewarmS: p?.prewarm ?? 0, pulsePeriod: 0, pulseDepth: 0, area: null, point: null, clip: null,
   };
   // explicit overrides (same precedence as C++)
   r.slot = slotFromName(j.z, r.slot);
@@ -224,6 +228,7 @@ export function resolveEmitter(j: FxEmitterJson): FxResolved {
   if (typeof j.aspect === "number") r.aspect = Math.max(0.1, j.aspect);
   if (typeof j.align === "boolean") r.align = j.align;
   if (typeof j.prewarm_s === "number") r.prewarmS = j.prewarm_s;
+  if (j.pulse && typeof j.pulse === "object") { r.pulsePeriod = j.pulse.period_ms ?? 3000; r.pulseDepth = Math.min(1, Math.max(0, j.pulse.depth ?? 0.5)); }
   if (Array.isArray(j.area) && j.area.length >= 4) r.area = [+j.area[0], +j.area[1], +j.area[2], +j.area[3]];
   if (Array.isArray(j.point) && j.point.length >= 2) { r.point = [+j.point[0], +j.point[1]]; if (j.spawn === undefined) r.spawnMode = 5; }
   if (Array.isArray(j.clip) && j.clip.length >= 4) r.clip = [+j.clip[0], +j.clip[1], +j.clip[2], +j.clip[3]];
@@ -253,6 +258,7 @@ interface Overlay {
   breathePeriod: number; breatheSX: number; breatheSY: number; breatheAlpha: number;
   swayPeriod: number; swayDeg: number; bobPeriod: number; bobPx: number;
   driftVX: number; driftVY: number; driftWrap: boolean;
+  pulsePeriod: number; pulseDepth: number;
   warp: number; warpAmp: number; warpPeriod: number; warpFreq: number; cols: number; rows: number;
   frameCols: number; frameRows: number; frameCount: number; frameFps: number;
   idle: boolean; triggers: string[]; durationMs: number; fadeMs: number;
@@ -400,6 +406,7 @@ export class FxSim {
         swayPeriod: j.sway ? (j.sway.period_ms ?? 3000) : 0, swayDeg: j.sway ? (j.sway.deg ?? 2) : 0,
         bobPeriod: j.bob ? (j.bob.period_ms ?? 3000) : 0, bobPx: j.bob ? (j.bob.px ?? 6) * sy : 0,
         driftVX: (j.drift?.vx ?? 0) * sx, driftVY: (j.drift?.vy ?? 0) * sy, driftWrap: !!j.drift?.wrap,
+        pulsePeriod: j.pulse ? (j.pulse.period_ms ?? 3000) : 0, pulseDepth: j.pulse ? clamp(j.pulse.depth ?? 0.5, 0, 1) : 0,
         warp: j.warp ? ({ wave: 1, flag: 2, bulge: 3, jelly: 4 } as any)[j.warp.type ?? "wave"] ?? 0 : 0,
         warpAmp: (j.warp?.amp ?? 6) * s, warpPeriod: Math.max(50, j.warp?.period_ms ?? 2000), warpFreq: j.warp?.freq ?? 1,
         cols: 1, rows: 1,
@@ -532,10 +539,12 @@ export class FxSim {
     ctx.save();
     ctx.globalCompositeOperation = r.blend === "add" ? "lighter" : "source-over";
     if (e.clip) { ctx.beginPath(); ctx.rect(e.clip.x, e.clip.y, e.clip.w, e.clip.h); ctx.clip(); }
+    const pulseMul = (r.pulsePeriod > 0 && r.pulseDepth > 0)
+      ? 1 - r.pulseDepth * (0.5 - 0.5 * Math.sin(performance.now() * 2 * PI / r.pulsePeriod)) : 1;
     for (const p of e.pool) {
       if (!p.alive) continue;
       const t = p.maxLife > 0 ? clamp(1 - p.life / p.maxLife, 0, 1) : 0;
-      let a = alphaCurve(r.alphaCurve, t) * r.alphaMax;
+      let a = alphaCurve(r.alphaCurve, t) * r.alphaMax * pulseMul;
       if (r.twinkleAmt > 0 && r.twinkleHz > 0)
         a *= (1 - r.twinkleAmt) + r.twinkleAmt * (0.5 + 0.5 * Math.sin(p.age * r.twinkleHz * 6.2831 + p.seed));
       if (a <= 0.003) continue;
@@ -583,7 +592,8 @@ export class FxSim {
     }
     const bp = phase(o.breathePeriod);
     const scaleX = 1 + o.breatheSX * bp, scaleY = 1 + o.breatheSY * bp;
-    const alpha = o.alpha * vis * (1 - o.breatheAlpha * (0.5 - 0.5 * bp));
+    let alpha = o.alpha * vis * (1 - o.breatheAlpha * (0.5 - 0.5 * bp));
+    if (o.pulsePeriod > 0 && o.pulseDepth > 0) alpha *= 1 - o.pulseDepth * (0.5 - 0.5 * phase(o.pulsePeriod));
     const swayRad = o.swayDeg * phase(o.swayPeriod) * PI / 180;
     const bob = o.bobPx * phase(o.bobPeriod);
     const pvx = o.dst.x + o.dst.w * o.pivotX, pvy = o.dst.y + o.dst.h * o.pivotY;
@@ -689,6 +699,23 @@ export function fxDocFromEventMap(em: any): FxDoc {
 export function fxDocIntoEventMap(em: any, doc: FxDoc): void {
   if (doc.particles.length) em.particles = doc.particles; else delete em.particles;
   if (doc.overlays.length)  em.overlays  = doc.overlays;  else delete em.overlays;
+}
+
+/** Particle budget check for the panel: which emitters survive the renderer's
+ *  global cap (applied in list order, same as b2s_fx.cpp load()). */
+export const FX_PARTICLE_CAP = MAX_PARTICLES_TOTAL;
+export const FX_MAX_TEXTURE = 2048;
+export function fxBudget(doc: FxDoc): { total: number; rows: { name: string; want: number; got: number }[] } {
+  let budget = MAX_PARTICLES_TOTAL, total = 0;
+  const rows: { name: string; want: number; got: number }[] = [];
+  for (const j of (doc.particles ?? []).slice(0, MAX_EMITTERS)) {
+    if (!j || j.enabled === false) continue;
+    const want = resolveEmitter(j).maxN;
+    const got = Math.max(0, Math.min(want, budget));
+    budget -= got; total += want;
+    rows.push({ name: j.name ?? "emitter", want, got });
+  }
+  return { total, rows };
 }
 
 /** Human labels for the panel. */

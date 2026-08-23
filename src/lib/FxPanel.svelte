@@ -3,7 +3,7 @@
   // Edits the JSON objects in place (they ARE the saved format); fields left
   // untouched stay absent so the preset default applies on the Pi. Every
   // control shows the effective value (preset default when unset).
-  import { FX_PRESETS, PRESET_LABELS, SPRITE_NAMES, resolveEmitter, presetDefaults,
+  import { FX_PRESETS, PRESET_LABELS, SPRITE_NAMES, resolveEmitter, presetDefaults, fxBudget, FX_PARTICLE_CAP,
            type FxDoc, type FxEmitterJson, type FxOverlayJson } from "./fx";
 
   let {
@@ -38,6 +38,8 @@
     return () => clearInterval(id);
   });
 
+  let budget = $derived(fxBudget(doc));
+  let trimmed = $derived(budget.rows.filter(r => r.got < r.want));
   let cur = $derived(selected >= 0 && selected < doc.particles.length ? doc.particles[selected] : null);
   let def = $derived(cur ? presetDefaults(cur.preset ?? "") : presetDefaults(""));
   let eff = $derived(cur ? resolveEmitter(cur) : null);
@@ -148,13 +150,14 @@
   }
   function removeOverlay(i: number) { doc.overlays.splice(i, 1); if (oSel >= doc.overlays.length) oSel = doc.overlays.length - 1; }
   function oRect(i: number, v: number) { if (!ocur || Number.isNaN(v)) return; if (!ocur.rect) ocur.rect = [0, 0, 0, 0]; ocur.rect[i] = Math.round(v); }
-  function oToggle(key: "breathe" | "sway" | "bob" | "drift" | "warp", on: boolean) {
+  function oToggle(key: "breathe" | "sway" | "bob" | "drift" | "warp" | "pulse", on: boolean) {
     if (!ocur) return;
     if (!on) { delete ocur[key]; return; }
     if (key === "breathe") ocur.breathe = { period_ms: 4000, scale_x: 0, scale_y: 0.02, alpha: 0 };
     if (key === "sway") ocur.sway = { period_ms: 3000, deg: 2 };
     if (key === "bob") ocur.bob = { period_ms: 3000, px: 6 };
     if (key === "drift") ocur.drift = { vx: 20, vy: 0, wrap: true };
+    if (key === "pulse") ocur.pulse = { period_ms: 3000, depth: 0.5 };
     if (key === "warp") ocur.warp = { type: "wave", amp: 6, period_ms: 2500, freq: 1 };
   }
 </script>
@@ -182,6 +185,18 @@
       <button type="button" onclick={addEmitter}
         class="text-[11px] px-2 py-1 rounded bg-amber-400/15 text-amber-200 border border-amber-400/40 hover:bg-amber-400/25">+ Add</button>
     </div>
+
+    <!-- particle budget (renderer cap, applied in list order) -->
+    {#if doc.particles.length > 0}
+      <div class="text-[10px] {budget.total > FX_PARTICLE_CAP ? 'text-amber-300' : 'text-zinc-500'}">
+        <div class="flex justify-between"><span>Particle budget</span><span class="font-mono">{budget.total} / {FX_PARTICLE_CAP}</span></div>
+        <div class="h-1 rounded bg-white/10 mt-0.5 overflow-hidden"><div class="h-full {budget.total > FX_PARTICLE_CAP ? 'bg-amber-400' : 'bg-emerald-400/70'}" style="width:{Math.min(100, budget.total / FX_PARTICLE_CAP * 100)}%"></div></div>
+        {#if trimmed.length}
+          <div class="mt-1 leading-snug">⚠ Over the cabinet's {FX_PARTICLE_CAP}-particle cap. Layers are filled top-down, so these get cut:
+            {#each trimmed as t, i}{i ? ", " : " "}<span class="font-mono">{t.name}</span> ({t.got}/{t.want}){/each}. Lower some Counts or move the important layers up.</div>
+        {/if}
+      </div>
+    {/if}
 
     <!-- list -->
     {#if doc.particles.length === 0}
@@ -328,6 +343,12 @@
           {@render slider("Twinkle Hz", "fx-twhz", eff.twinkleHz, 0, 10, 0.1, `${eff.twinkleHz.toFixed(1)} Hz`, (v) => setNum("twinkle_hz", v, def.twinkleHz))}
         </div>
         <div class="grid grid-cols-2 gap-2">
+          {@render slider("Pulse depth", "fx-pdepth", eff.pulseDepth, 0, 1, 0.05, eff.pulseDepth > 0 ? `${Math.round(eff.pulseDepth * 100)}%` : "off",
+            (v) => { if (v <= 0) delete cur!.pulse; else cur!.pulse = { period_ms: cur!.pulse?.period_ms ?? 3000, depth: v }; })}
+          {@render slider("Pulse period", "fx-pper", eff.pulsePeriod || 3000, 200, 20000, 100, `${((eff.pulsePeriod || 3000) / 1000).toFixed(1)}s`,
+            (v) => { if (cur!.pulse) cur!.pulse.period_ms = v; })}
+        </div>
+        <div class="grid grid-cols-2 gap-2">
           {@render slider("Gravity", "fx-grav", eff.gravity, -500, 2000, 5, `${eff.gravity}`, (v) => setNum("gravity", v, def.gravity))}
           {@render slider("Drag", "fx-drag", eff.drag, 0, 1, 0.01, eff.drag.toFixed(2), (v) => setNum("drag", v, def.drag))}
         </div>
@@ -460,7 +481,7 @@
           </div>
         {/if}
 
-        {#snippet motion(label: string, key: "breathe" | "sway" | "bob" | "drift" | "warp")}
+        {#snippet motion(label: string, key: "breathe" | "sway" | "bob" | "drift" | "warp" | "pulse")}
           <label class="text-[10px] text-zinc-300 flex items-center gap-1">
             <input type="checkbox" checked={!!ocur?.[key]} onchange={(e) => oToggle(key, (e.currentTarget as HTMLInputElement).checked)} class="accent-amber-400" /> {label}
           </label>
@@ -492,6 +513,13 @@
           <div class="grid grid-cols-2 gap-1 pl-4">
             {@render num("period ms", ocur.bob, "period_ms", 200, 20000, 100)}
             {@render num("px", ocur.bob, "px", -200, 200, 1)}
+          </div>
+        {/if}
+        {@render motion("Pulse (brightness)", "pulse")}
+        {#if ocur.pulse}
+          <div class="grid grid-cols-2 gap-1 pl-4">
+            {@render num("period ms", ocur.pulse, "period_ms", 200, 20000, 100)}
+            {@render num("depth 0-1", ocur.pulse, "depth", 0, 1, 0.05)}
           </div>
         {/if}
         {@render motion("Drift (move)", "drift")}
