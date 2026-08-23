@@ -516,7 +516,13 @@ pub async fn install_pi_update(
     if service_restarted {
         let mut verified = false;
         let mut last_state = String::new();
-        for attempt in 0..10 {
+        // Poll window widened from ~31 s to ~61 s: the Pi Zero can be slow to
+        // settle after a restart when it's under load (e.g. a media sync running
+        // concurrently), and a too-short window false-failed an update whose
+        // binaries were already correctly on disk. Now that transfers go over
+        // pooled SFTP the load is far lower, but the extra headroom is cheap
+        // insurance and only costs time on an actually-failing update.
+        for attempt in 0..20 {
             let delay = if attempt == 0 { 4 } else { 3 };
             let (sdl, dmn) = pi_running_hashes(&pool, &host, delay).await;
             if running_matches(&sdl, expected.get("pinnerpi_sdl"))
@@ -534,9 +540,13 @@ pub async fn install_pi_update(
         if !verified {
             return Err(format!(
                 "files installed, but the running binaries do not match this release after restart ({}). \
-                 The Pi may have crash-looped and auto-reverted to its __golden baseline — \
-                 check /home/pi/PinnerPi/crashlogs/ on the Pi. VERSION was NOT bumped, \
-                 so the update will correctly show as still pending.",
+                 MOST COMMON CAUSE: a media sync was running at the same time — the file transfer \
+                 loads the Pi Zero during the restart+verify window, so this check times out even \
+                 though the new binaries are already on disk. Let any sync finish, then run the update \
+                 again (it skips the already-copied files and just restarts + verifies). \
+                 If no sync was running, the Pi may have crash-looped and auto-reverted to its __golden \
+                 baseline — check /home/pi/PinnerPi/crashlogs/. Either way VERSION was NOT bumped, so \
+                 the update correctly still shows as pending.",
                 last_state
             ));
         }

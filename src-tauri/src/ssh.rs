@@ -436,3 +436,174 @@ pub async fn sftp_write(
         .map_err(|e| format!("sftp flush: {}", e))?;
     Ok(())
 }
+
+// ─── File transfer with mtime preservation (replaces scp -p in sync) ──
+//
+// The sync engine used to shell out to `scp.exe` once per file — ~700 fresh
+// SSH handshakes on a cold full mirror, which pegs the Pi Zero's CPU on crypto
+// and starves a concurrent SDL2 update's restart+verify (the "update doesn't
+// apply during initial sync" bug). These run every transfer over the ONE
+// pooled russh connection instead: no handshake storm, and the shared per-host
+// session mutex naturally interleaves sync + update at file granularity.
+//
+// mtime is preserved in BOTH directions because the sync's diff-skip compares
+// local vs Pi (size + mtime) — scp's `-p` did this; SFTP must do it explicitly
+// or every sync would re-transfer everything.
+
+/// Download `remote_path` → `local_path`, stamping the local file's mtime to
+/// the remote's (epoch seconds, returned). Retries once on a stale connection.
+pub async fn sftp_download(
+    pool: &SshPool,
+    host: &str,
+    remote_path: &str,
+    local_path: &std::path::Path,
+) -> Result<i64, String> {
+    match sftp_download_once(pool, host, remote_path, local_path).await {
+        Ok(m) => Ok(m),
+        Err(e) if is_stale(&e) => {
+            pool.drop_session(host);
+            sftp_download_once(pool, host, remote_path, local_path).await
+        }
+        Err(e) => Err(e),
+    }
+}
+
+async fn sftp_download_once(
+    pool: &SshPool,
+    host: &str,
+    remote_path: &str,
+    local_path: &std::path::Path,
+) -> Result<i64, String> {
+    let session = pool.get(host).await?;
+    let s = session.lock().await;
+
+    let channel = s
+        .handle
+        .channel_open_session()
+        .await
+        .map_err(|e| format!("sftp open channel: {}", e))?;
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .map_err(|e| format!("sftp subsystem: {}", e))?;
+    let sftp = SftpSession::new(channel.into_stream())
+        .await
+        .map_err(|e| format!("sftp init: {}", e))?;
+
+    // Remote mtime (for diff-skip parity with `scp -p`).
+    let meta = sftp
+        .metadata(remote_path.to_string())
+        .await
+        .map_err(|e| format!("sftp stat {}: {}", remote_path, e))?;
+    let mtime = meta.mtime.unwrap_or(0) as i64;
+
+    let mut file = sftp
+        .open(remote_path)
+        .await
+        .map_err(|e| format!("sftp open {}: {}", remote_path, e))?;
+    use tokio::io::AsyncReadExt;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf)
+        .await
+        .map_err(|e| format!("sftp read {}: {}", remote_path, e))?;
+    // Close the remote handle — the pooled session lives for the whole app
+    // run, so unclosed handles would pile up on sftp-server across a sync.
+    { use tokio::io::AsyncWriteExt; let _ = file.shutdown().await; }
+
+    std::fs::write(local_path, &buf)
+        .map_err(|e| format!("write {}: {}", local_path.display(), e))?;
+
+    if mtime > 0 {
+        let ft = filetime::FileTime::from_unix_time(mtime, 0);
+        let _ = filetime::set_file_mtime(local_path, ft); // best-effort
+    }
+    Ok(mtime)
+}
+
+/// Upload `local_path` → `remote_path`, setting the remote mtime to match the
+/// local file's (epoch seconds, returned) so a later pull diff-skips it.
+/// Retries once on a stale connection.
+pub async fn sftp_upload(
+    pool: &SshPool,
+    host: &str,
+    local_path: &std::path::Path,
+    remote_path: &str,
+) -> Result<i64, String> {
+    match sftp_upload_once(pool, host, local_path, remote_path).await {
+        Ok(m) => Ok(m),
+        Err(e) if is_stale(&e) => {
+            pool.drop_session(host);
+            sftp_upload_once(pool, host, local_path, remote_path).await
+        }
+        Err(e) => Err(e),
+    }
+}
+
+async fn sftp_upload_once(
+    pool: &SshPool,
+    host: &str,
+    local_path: &std::path::Path,
+    remote_path: &str,
+) -> Result<i64, String> {
+    let bytes = std::fs::read(local_path)
+        .map_err(|e| format!("read {}: {}", local_path.display(), e))?;
+    let lmt = std::fs::metadata(local_path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let session = pool.get(host).await?;
+    let s = session.lock().await;
+
+    let channel = s
+        .handle
+        .channel_open_session()
+        .await
+        .map_err(|e| format!("sftp open channel: {}", e))?;
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .map_err(|e| format!("sftp subsystem: {}", e))?;
+    let sftp = SftpSession::new(channel.into_stream())
+        .await
+        .map_err(|e| format!("sftp init: {}", e))?;
+
+    {
+        let mut file = sftp
+            .create(remote_path)
+            .await
+            .map_err(|e| format!("sftp create {}: {}", remote_path, e))?;
+        use tokio::io::AsyncWriteExt;
+        file.write_all(&bytes)
+            .await
+            .map_err(|e| format!("sftp write: {}", e))?;
+        file.flush()
+            .await
+            .map_err(|e| format!("sftp flush: {}", e))?;
+        // Close the remote handle (SSH_FXP_CLOSE) before touching attributes.
+        file.shutdown()
+            .await
+            .map_err(|e| format!("sftp close: {}", e))?;
+    }
+
+    // Best-effort: stamp remote mtime so the next pull diff-skips this file.
+    // NEVER use `..Default::default()` here: russh-sftp's FileAttributes::default()
+    // is size=Some(0) / uid=gid=Some(0) / dir permissions — the resulting SETSTAT
+    // TRUNCATED every pushed file to 0 bytes (b2s_event_map.json, 2026-08-22).
+    if lmt > 0 {
+        let attrs = russh_sftp::protocol::FileAttributes {
+            size: None,
+            uid: None,
+            user: None,
+            gid: None,
+            group: None,
+            permissions: None,
+            atime: Some(lmt as u32),
+            mtime: Some(lmt as u32),
+        };
+        let _ = sftp.set_metadata(remote_path.to_string(), attrs).await;
+    }
+    Ok(lmt)
+}

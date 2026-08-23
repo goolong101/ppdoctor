@@ -10,30 +10,12 @@
 use rusqlite::params;
 use serde::Serialize;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Emitter;
 
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
-#[cfg(windows)]
-const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x00004000;
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-/// Spawn a Command with reduced OS priority and no console window.
-/// `CREATE_NO_WINDOW` suppresses the cmd-prompt flash that ssh.exe /
-/// scp.exe / their relatives normally show on each spawn — eliminates
-/// the "OpenSSH processes flashing in the background" experience the
-/// user sees during sync flows. No-op on non-Windows.
-fn low_prio_cmd(bin: &str) -> Command {
-    let mut c = Command::new(bin);
-    #[cfg(windows)]
-    {
-        c.creation_flags(BELOW_NORMAL_PRIORITY_CLASS | CREATE_NO_WINDOW);
-    }
-    c
-}
+// Transfers now go over the pooled russh/SFTP connection (see crate::ssh) —
+// no more shelling out to scp.exe, so the console-window-suppression /
+// low-priority Command helpers that lived here are gone.
 
 use crate::db::DbState;
 
@@ -108,33 +90,6 @@ fn cache_root(host: &str, custom: Option<&str>) -> PathBuf {
     }
 }
 
-fn ssh_target(host: &str) -> String {
-    if host.contains('@') { host.to_string() } else { format!("pi@{}", host) }
-}
-
-/// Common SSH options for every scp/ssh call inside the sync loop.
-///
-/// ControlMaster was originally enabled here to share one persistent connection
-/// across all scp calls (eliminating ~500ms-1s handshake per file). It's been
-/// dropped because Windows OpenSSH scp (C:\Windows\System32\OpenSSH\scp.exe,
-/// the binary Tauri's Command::new("scp") resolves to via CreateProcess PATH
-/// search) doesn't support ControlMaster — every call fails with
-/// `getsockname failed: Not a socket` and exit 255. We discovered this on
-/// 2026-05-25 after the mirror appeared to "succeed" 695× per run while
-/// writing zero files (only the gitea-merge path was producing cache files).
-///
-/// Trade-off: each scp now pays a fresh handshake (~500ms-1s) but at least
-/// transfers actually complete. For a fresh-cache full mirror of ~700 files
-/// that adds ~5-10 minutes of wall time compared to a working ControlMaster.
-fn cm_args(host: &str) -> Vec<String> {
-    let _ = host;
-    vec![
-        "-o".into(), "BatchMode=yes".into(),
-        "-o".into(), "StrictHostKeyChecking=accept-new".into(),
-        "-o".into(), "ConnectTimeout=10".into(),
-    ]
-}
-
 fn emit(app: &tauri::AppHandle, p: SyncProgress) {
     let _ = app.emit("sync:progress", p);
 }
@@ -173,6 +128,7 @@ pub fn sync_push_dirty(
     host: String,
     cache_root: Option<String>,
     state: tauri::State<'_, DbState>,
+    pool: tauri::State<'_, crate::ssh::SshPool>,
 ) -> Result<usize, String> {
     let _guard = try_claim_sync()?;   // refuses duplicate concurrent calls
 
@@ -206,7 +162,6 @@ pub fn sync_push_dirty(
     }
 
     let cache = cache_root_for(&host, cache_root.as_deref());
-    let target = ssh_target(&host);
     let mut succeeded = 0usize;
 
     for (i, (table_id, slot, filename, pi_folder)) in rows.iter().enumerate() {
@@ -242,19 +197,24 @@ pub fn sync_push_dirty(
             continue;
         }
 
-        let dest = format!("{}:{}", target, remote_path);
-        let mut cmd = low_prio_cmd("scp");
-        for a in cm_args(&host) { cmd.arg(a); }
-        cmd.arg(&local_path).arg(&dest);
-        let result = cmd.output();
+        // Pooled SFTP (was scp); sftp_upload also stamps the remote mtime.
+        let result = tauri::async_runtime::block_on(
+            crate::ssh::sftp_upload(pool.inner(), &host, &local_path, &remote_path)
+        );
 
         match result {
-            Ok(o) if o.status.success() => {
+            Ok(mtime) => {
+                // Record the pushed file's size+mtime as BOTH local and pi so a
+                // later pull diff-skips it (sftp_upload set the remote mtime to
+                // match) — prevents needless re-transfer churn after edits.
+                let size = std::fs::metadata(&local_path).map(|m| m.len() as i64).unwrap_or(0);
                 let g = state.conn.lock().unwrap();
                 if let Some(conn) = g.as_ref() {
                     let _ = conn.execute(
-                        "UPDATE media_files SET dirty = 0 WHERE table_id = ?1 AND slot = ?2 AND filename = ?3",
-                        params![table_id, slot, filename],
+                        "UPDATE media_files SET dirty = 0, pi_size = ?4, pi_mtime = ?5, \
+                         local_size = ?4, local_mtime = ?5 \
+                         WHERE table_id = ?1 AND slot = ?2 AND filename = ?3",
+                        params![table_id, slot, filename, size, mtime],
                     );
                 }
                 emit(&app, SyncProgress {
@@ -264,16 +224,10 @@ pub fn sync_push_dirty(
                 });
                 succeeded += 1;
             }
-            Ok(o) => emit(&app, SyncProgress {
-                phase: "push".into(), current: i + 1, total,
-                file: filename.clone(), status: "error".into(),
-                error: Some(String::from_utf8_lossy(&o.stderr).trim().to_string()),
-                table_id: Some(*table_id), slot: Some(slot.clone()),
-            }),
             Err(e) => emit(&app, SyncProgress {
                 phase: "push".into(), current: i + 1, total,
                 file: filename.clone(), status: "error".into(),
-                error: Some(e.to_string()),
+                error: Some(e),
                 table_id: Some(*table_id), slot: Some(slot.clone()),
             }),
         }
@@ -301,6 +255,7 @@ pub fn sync_pull_table(
     table_id: i64,
     pi_folder: String,
     state: tauri::State<'_, DbState>,
+    pool: tauri::State<'_, crate::ssh::SshPool>,
 ) -> Result<usize, String> {
     // Pull slot, filename, pi_size, pi_mtime so we can diff-skip.
     let rows: Vec<(String, String, Option<i64>, Option<i64>)> = {
@@ -329,7 +284,6 @@ pub fn sync_pull_table(
     }
 
     let cache = cache_root_for(&host, cache_root.as_deref());
-    let target = ssh_target(&host);
     let mut succeeded = 0usize;
     let mut _skipped = 0usize;
 
@@ -379,17 +333,13 @@ pub fn sync_pull_table(
         });
 
         let remote_path = format!("/home/pi/PinnerPi/media/{}/{}/{}", pi_folder, slot, filename);
-        let src = format!("{}:{}", target, remote_path);
-
-        // -p preserves mtime so future diff-checks work
-        let mut cmd = low_prio_cmd("scp");
-        cmd.arg("-p");
-        for a in cm_args(&host) { cmd.arg(a); }
-        cmd.arg(&src).arg(&local_path);
-        let result = cmd.output();
+        // Pooled SFTP (was `scp -p`); sftp_download stamps the local mtime.
+        let result = tauri::async_runtime::block_on(
+            crate::ssh::sftp_download(pool.inner(), &host, &remote_path, &local_path)
+        );
 
         match result {
-            Ok(o) if o.status.success() => {
+            Ok(_mtime) => {
                 if let Ok(md) = std::fs::metadata(&local_path) {
                     let size = md.len() as i64;
                     let mtime = md.modified()
@@ -413,16 +363,10 @@ pub fn sync_pull_table(
                 });
                 succeeded += 1;
             }
-            Ok(o) => emit(&app, SyncProgress {
-                phase: "pull".into(), current: i + 1, total,
-                file: filename.clone(), status: "error".into(),
-                error: Some(String::from_utf8_lossy(&o.stderr).trim().to_string()),
-                table_id: Some(table_id), slot: Some(slot.clone()),
-            }),
             Err(e) => emit(&app, SyncProgress {
                 phase: "pull".into(), current: i + 1, total,
                 file: filename.clone(), status: "error".into(),
-                error: Some(e.to_string()),
+                error: Some(e),
                 table_id: Some(table_id), slot: Some(slot.clone()),
             }),
         }
@@ -453,6 +397,7 @@ pub fn sync_pull_all(
     cache_root: Option<String>,
     gitea_root: Option<String>,
     state: tauri::State<'_, DbState>,
+    pool: tauri::State<'_, crate::ssh::SshPool>,
 ) -> Result<usize, String> {
     let _guard = try_claim_sync()?;   // refuses duplicate concurrent calls
 
@@ -491,7 +436,6 @@ pub fn sync_pull_all(
     }
 
     let cache = cache_root_for(&host, cache_root.as_deref());
-    let target = ssh_target(&host);
     let mut succeeded = 0usize;
     let mut last_table: Option<i64> = None;
     let now_sec = std::time::SystemTime::now()
@@ -605,15 +549,15 @@ pub fn sync_pull_all(
         });
 
         let remote_path = format!("/home/pi/PinnerPi/media/{}/{}/{}", pi_folder, slot, filename);
-        let src = format!("{}:{}", target, remote_path);
-        let mut cmd = low_prio_cmd("scp");
-        cmd.arg("-p");
-        for a in cm_args(&host) { cmd.arg(a); }
-        cmd.arg(&src).arg(&local_path);
-        let result = cmd.output();
+        // SFTP over the ONE pooled connection (was `scp -p`): no per-file
+        // handshake storm, so a concurrent SDL2 update isn't starved. mtime is
+        // stamped onto the local file by sftp_download to keep diff-skip working.
+        let result = tauri::async_runtime::block_on(
+            crate::ssh::sftp_download(pool.inner(), &host, &remote_path, &local_path)
+        );
 
         match result {
-            Ok(o) if o.status.success() => {
+            Ok(_mtime) => {
                 if let Ok(md) = std::fs::metadata(&local_path) {
                     let size = md.len() as i64;
                     let mtime = md.modified()
@@ -637,16 +581,10 @@ pub fn sync_pull_all(
                 });
                 succeeded += 1;
             }
-            Ok(o) => emit(&app, SyncProgress {
-                phase: "pull".into(), current: i + 1, total,
-                file: filename.clone(), status: "error".into(),
-                error: Some(String::from_utf8_lossy(&o.stderr).trim().to_string()),
-                table_id: Some(*table_id), slot: Some(slot.clone()),
-            }),
             Err(e) => emit(&app, SyncProgress {
                 phase: "pull".into(), current: i + 1, total,
                 file: filename.clone(), status: "error".into(),
-                error: Some(e.to_string()),
+                error: Some(e),
                 table_id: Some(*table_id), slot: Some(slot.clone()),
             }),
         }

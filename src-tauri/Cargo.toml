@@ -46,6 +46,10 @@ russh-sftp = "2"
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 parking_lot = "0.12"
+# Stamp a local file's mtime to match the Pi's after an SFTP pull, so the
+# sync diff-skip (size + mtime match → skip) keeps working now that transfers
+# go over pooled SFTP instead of `scp -p`. Cross-platform, tiny.
+filetime = "0.2"
 
 # Size-optimized release build (matches the "small single exe" goal above).
 # strip drops debug symbols (the biggest single win), lto + codegen-units=1
