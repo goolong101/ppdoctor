@@ -408,6 +408,9 @@
             <span class="text-[10px] text-zinc-400">Color over life</span>
             <span class="flex gap-1">
               <button type="button" onclick={addRampStop} class="text-[10px] text-zinc-400 hover:text-zinc-200" title="add stop">+</button>
+              <label class="text-[10px] text-zinc-400 flex items-center gap-1" title="each particle keeps one random color instead of fading through them">
+                <input type="checkbox" checked={eff.colorRandom} onchange={(e) => setBool("color_random", (e.currentTarget as HTMLInputElement).checked, def.colorRandom)} class="accent-amber-400" /> random
+              </label>
               <button type="button" onclick={resetColors} class="text-[10px] text-zinc-400 hover:text-zinc-200" title="preset colors">reset</button>
             </span>
           </div>

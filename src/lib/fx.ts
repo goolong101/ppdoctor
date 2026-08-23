@@ -46,6 +46,8 @@ export interface FxEmitterJson {
   align?: boolean;
   rotate?: number | [number, number];
   color?: FxColor | FxColor[];
+  /** Each particle keeps one random ramp stop instead of fading through the ramp. */
+  color_random?: boolean;
   alpha?: "flat" | "fade_out" | "fade_in_out" | "fade_in";
   alpha_max?: number;
   twinkle_hz?: number;
@@ -85,10 +87,11 @@ export interface FxDoc { particles: FxEmitterJson[]; overlays: FxOverlayJson[]; 
 
 export const FX_PRESETS = [
   "starfield", "rain", "snow", "smoke", "fire", "flames", "embers", "sparkles", "fireflies", "meteors", "laser", "bubbles",
+  "lightning", "confetti", "leaves", "petals", "dust", "fog", "steam", "sparks", "warp", "raindrops",
 ] as const;
 export type FxPreset = typeof FX_PRESETS[number];
 
-export const SPRITE_NAMES = ["soft", "dot", "streak", "star", "puff", "ring", "bubble"] as const;
+export const SPRITE_NAMES = ["soft", "dot", "streak", "star", "puff", "ring", "bubble", "square", "leaf"] as const;
 
 // ── caps (b2s_fx.cpp) ─────────────────────────────────────────────────────────
 const SPRITE_SIZE = 64;
@@ -130,6 +133,16 @@ const PRESETS: Record<string, PresetRow> = {
   fireflies: row("soft",   "add",   "above", "area",   25,  0,    0,    0,    10,   30,   0,   180, 0, 1,    80, 6,  10,  0,    0,    0,   "flat",        0.9,  0.5, 0.8, true,  0,  1,  false, [[200,255,120]]),
   meteors:   row("streak", "add",   "above", "right",  12,  0.6,  1.2,  2.0,  500,  800,  160, 8,   0, 1,    0,  6,  10,  0,    0,    0,   "fade_out",    0.9,  0,   0,   false, 0,  8,  true,  [[255,240,200],[255,140,40]]),
   bubbles:   row("bubble", "blend", "above", "bottom", 60,  7,    4.0,  9.0,  30,   75,   270, 12,  0, 1,    70, 8,  48,  0.25, 0,    0,   "fade_in_out", 0.75, 0.3, 0.25, false, 6,  1,  false, [[235,250,255],[180,225,255]]),
+  lightning: row("streak", "add",   "above", "top",    40,  3,    0.08, 0.18, 2500, 4000, 90,  20,  0, 1,    0,  6,  12,  0,    0,    0,   "fade_out",    1.0,  0,   0,   false, 0,  12, true,  [[255,255,255],[150,190,255]]),
+  confetti:  row("square", "blend", "above", "top",    150, 25,   5,    9,    80,   160,  90,  25,  60,0.9,  60, 8,  16,  0,    -360, 360, "flat",        0.95, 0,   0,   false, 6,  1,  false, [[255,70,70],[255,220,60],[80,230,120],[80,200,255],[230,90,255],[255,255,255]]),
+  leaves:    row("leaf",   "blend", "above", "top",    40,  3,    8,    14,   40,   90,   100, 20,  10,1,    120,18, 36,  0,    -120, 120, "flat",        0.95, 0,   0,   false, 10, 1,  false, [[230,130,40],[150,80,30],[240,200,60],[200,50,30]]),
+  petals:    row("leaf",   "blend", "above", "top",    60,  5,    8,    14,   30,   70,   100, 25,  0, 1,    140,12, 24,  0,    -180, 180, "flat",        0.9,  0,   0,   false, 10, 1,  false, [[255,170,200],[255,215,230],[255,255,255]]),
+  dust:      row("soft",   "add",   "below", "area",   80,  0,    0,    0,    3,    10,   0,   180, 0, 1,    20, 4,  10,  0,    0,    0,   "flat",        0.25, 0.3, 0.5, true,  0,  1,  false, [[255,250,235]]),
+  fog:       row("puff",   "blend", "below", "area",   20,  0,    0,    0,    8,    20,   0,   8,   0, 1,    0,  300,600, 0,    0,    0,   "flat",        0.18, 0.05,0.3, true,  0,  1,  false, [[190,200,215]]),
+  steam:     row("puff",   "blend", "above", "bottom", 50,  14,   2,    4,    60,   120,  270, 20,  0, 0.7,  40, 40, 90,  1.8,  -15,  15,  "fade_in_out", 0.3,  0,   0,   false, 3,  1,  false, [[255,255,255],[220,225,235]]),
+  sparks:    row("dot",    "add",   "above", "point",  120, 60,   0.4,  1.0,  300,  700,  270, 40,  900,0.95,0,  2,  5,   0,    0,    0,   "fade_out",    1.0,  0,   0,   false, 0,  3,  true,  [[255,255,255],[255,230,120],[255,140,40]]),
+  warp:      row("streak", "add",   "below", "area",   200, 120,  0.4,  0.9,  900,  1800, 0,   8,   0, 1,    0,  2,  4,   0,    0,    0,   "fade_in_out", 0.9,  0,   0,   false, 1,  14, true,  [[255,255,255],[160,200,255]]),
+  raindrops: row("dot",    "blend", "above", "area",   80,  10,   2,    5,    0,    10,   90,  0,   90,0.35, 0,  3,  8,   0,    0,    0,   "fade_out",    0.55, 0,   0,   false, 3,  1,  false, [[200,225,255]]),
   laser:     row("streak", "add",   "above", "point",  40,  0,    0.15, 0.25, 1400, 1800, 0,   1,   0, 1,    0,  8,  12,  0,    0,    0,   "fade_out",    1.0,  0,   0,   false, 0,  10, true,  [[255,60,60]]),
 };
 
@@ -142,7 +155,7 @@ export interface FxResolved {
   wrap: boolean; lifeMin: number; lifeMax: number; speedMin: number; speedMax: number;
   angle: number; spread: number; gravity: number; drag: number; windX: number; windY: number; wander: number;
   sizeMin: number; sizeMax: number; grow: number; aspect: number; align: boolean; rotMin: number; rotMax: number;
-  ramp: FxColor[]; alphaCurve: number; alphaMax: number; twinkleHz: number; twinkleAmt: number; prewarmS: number;
+  ramp: FxColor[]; colorRandom: boolean; alphaCurve: number; alphaMax: number; twinkleHz: number; twinkleAmt: number; prewarmS: number;
   pulsePeriod: number; pulseDepth: number;
   area: [number, number, number, number] | null; point: [number, number] | null; clip: [number, number, number, number] | null;
   quad: [number, number][] | null;
@@ -203,6 +216,7 @@ export function resolveEmitter(j: FxEmitterJson): FxResolved {
     gravity: p?.gravity ?? 0, drag: p?.drag ?? 1, windX: 0, windY: 0, wander: p?.wander ?? 0,
     sizeMin: p?.sizeMin ?? 4, sizeMax: p?.sizeMax ?? 8, grow: p?.grow ?? 0, aspect: p?.aspect ?? 1, align: p?.align ?? false,
     rotMin: p?.rotMin ?? 0, rotMax: p?.rotMax ?? 0, ramp: p?.ramp ?? [[255, 255, 255]],
+    colorRandom: j.preset === "confetti" || j.preset === "leaves" || j.preset === "petals",
     alphaCurve: alphaCurveFromName(p?.alpha, 1), alphaMax: p?.alphaMax ?? 1, twinkleHz: p?.twHz ?? 0, twinkleAmt: p?.twAmt ?? 0,
     prewarmS: p?.prewarm ?? 0, pulsePeriod: 0, pulseDepth: 0, area: null, point: null, clip: null, quad: null,
   };
@@ -228,6 +242,7 @@ export function resolveEmitter(j: FxEmitterJson): FxResolved {
   if (typeof j.grow === "number") r.grow = j.grow;
   [r.rotMin, r.rotMax] = rangeOf(j.rotate, r.rotMin, r.rotMax);
   r.ramp = rampOf(j.color, r.ramp);
+  if (typeof j.color_random === "boolean") r.colorRandom = j.color_random;
   r.alphaCurve = alphaCurveFromName(j.alpha, r.alphaCurve);
   if (typeof j.alpha_max === "number") r.alphaMax = Math.min(1, Math.max(0, j.alpha_max));
   if (typeof j.twinkle_hz === "number") r.twinkleHz = j.twinkle_hz;
@@ -255,7 +270,7 @@ export function presetDefaults(preset: string): FxResolved { return resolveEmitt
 // ── runtime ───────────────────────────────────────────────────────────────────
 interface Particle {
   x: number; y: number; vx: number; vy: number; age: number; life: number; maxLife: number;
-  size: number; rot: number; rotV: number; seed: number; alive: boolean;
+  size: number; rot: number; rotV: number; seed: number; ci: number; alive: boolean;
 }
 interface Emitter {
   r: FxResolved;              // SCREEN units after scaling (speed/size/gravity/wander/wind)
@@ -318,6 +333,8 @@ function makeSprite(kind: number): HTMLCanvasElement {
                 a = clamp(core + ax * ax + ay * ay, 0, 1); break; }
       case 4: { let t = clamp(1 - r, 0, 1); t = t * t * (3 - 2 * t); a = t * (0.55 + 0.45 * vnoise(x * 0.18, y * 0.18)); break; }
       case 5: { const d = Math.abs(r - 0.7); a = clamp(1 - d * 5, 0, 1); a *= a; break; }
+      case 7: a = clamp((0.8 - Math.max(Math.abs(dx), Math.abs(dy))) * c * 0.5, 0, 1); break;
+      case 8: { const ex = dx / 0.95, ey = dy / 0.55, rr = Math.sqrt(ex * ex + ey * ey); a = clamp((1 - rr) * c * 0.25, 0, 1); break; }
       case 6: { let rim = clamp(1 - Math.abs(r - 0.86) * 9, 0, 1); rim *= rim;
                   const body = r < 0.86 ? 0.10 * (0.4 + 0.6 * r) : 0;
                   const hx = dx + 0.38, hy = dy + 0.42, hd = Math.sqrt(hx * hx + hy * hy);
@@ -410,7 +427,7 @@ export class FxSim {
       budget -= r.maxN;
       const quad = src.quad ? src.quad.map(q => ({ x: q[0] * sx, y: q[1] * sy })) : null;
       const e: Emitter = { r, area, quad, px, py, clip, pool: [], spawnAcc: 0, activeUntil: 0, lastMs: 0, clock: 0 };
-      for (let i = 0; i < r.maxN; i++) e.pool.push({ x: 0, y: 0, vx: 0, vy: 0, age: 0, life: 0, maxLife: 0, size: 1, rot: 0, rotV: 0, seed: 0, alive: false });
+      for (let i = 0; i < r.maxN; i++) e.pool.push({ x: 0, y: 0, vx: 0, vy: 0, age: 0, life: 0, maxLife: 0, size: 1, rot: 0, rotV: 0, seed: 0, ci: 0, alive: false });
       if (r.idle) {
         if (r.wrap || (r.lifeMax <= 0 && r.rate <= 0)) {
           for (let i = 0; i < e.pool.length; i++) this.spawnOne(e);
@@ -545,6 +562,7 @@ export class FxSim {
     p.size = frange(r.sizeMin, r.sizeMax);
     p.rot = frand() * 360; p.rotV = frange(r.rotMin, r.rotMax);
     p.seed = frand() * 6.2831;
+    p.ci = r.ramp.length ? Math.trunc(frand() * r.ramp.length) % r.ramp.length : 0;
     p.alive = true;
   }
 
@@ -603,7 +621,7 @@ export class FxSim {
       if (r.twinkleAmt > 0 && r.twinkleHz > 0)
         a *= (1 - r.twinkleAmt) + r.twinkleAmt * (0.5 + 0.5 * Math.sin(p.age * r.twinkleHz * 6.2831 + p.seed));
       if (a <= 0.003) continue;
-      const c = rampAt(r.ramp, t);
+      const c = r.colorRandom ? ([...r.ramp[p.ci], (r.ramp[p.ci] as any)[3] ?? 255] as [number, number, number, number]) : rampAt(r.ramp, t);
       const size = p.size * (1 + r.grow * t);
       if (size < 0.5) continue;
       const w = size, h = size * r.aspect;
@@ -775,6 +793,8 @@ export function fxBudget(doc: FxDoc): { total: number; rows: { name: string; wan
 
 /** Human labels for the panel. */
 export const PRESET_LABELS: Record<string, string> = {
-  starfield: "Starfield (moving stars)", bubbles: "Bubbles", rain: "Rain", snow: "Snow", smoke: "Smoke", fire: "Fire (sparks)", flames: "Flames (dense fire)",
+  starfield: "Starfield (moving stars)", bubbles: "Bubbles", lightning: "Lightning", confetti: "Confetti",
+  leaves: "Falling leaves", petals: "Petals", dust: "Dust motes", fog: "Fog", steam: "Steam", sparks: "Sparks shower",
+  warp: "Warp / hyperspace", raindrops: "Rain on glass", rain: "Rain", snow: "Snow", smoke: "Smoke", fire: "Fire (sparks)", flames: "Flames (dense fire)",
   embers: "Embers", sparkles: "Sparkles", fireflies: "Fireflies", meteors: "Meteors", laser: "Laser fire",
 };
