@@ -447,6 +447,19 @@
                    class="w-full text-[11px] bg-black/30 border border-white/10 rounded px-1 py-0.5 text-zinc-200 font-mono" /></label>
         </div>
 
+        <!-- sprite-sheet frames -->
+        <label class="text-[10px] text-zinc-300 flex items-center gap-1">
+          <input type="checkbox" checked={!!ocur.frames} onchange={(e) => { if ((e.currentTarget as HTMLInputElement).checked) ocur!.frames = { cols: 6, rows: 5, count: 30, fps: 15 }; else delete ocur!.frames; }} class="accent-amber-400" /> Animated sprite sheet
+        </label>
+        {#if ocur.frames}
+          <div class="grid grid-cols-4 gap-1 pl-4">
+            {@render num("cols", ocur.frames, "cols", 1, 32, 1)}
+            {@render num("rows", ocur.frames, "rows", 1, 32, 1)}
+            {@render num("count", ocur.frames, "count", 1, 1024, 1)}
+            {@render num("fps", ocur.frames, "fps", 1, 60, 1)}
+          </div>
+        {/if}
+
         {#snippet motion(label: string, key: "breathe" | "sway" | "bob" | "drift" | "warp")}
           <label class="text-[10px] text-zinc-300 flex items-center gap-1">
             <input type="checkbox" checked={!!ocur?.[key]} onchange={(e) => oToggle(key, (e.currentTarget as HTMLInputElement).checked)} class="accent-amber-400" /> {label}

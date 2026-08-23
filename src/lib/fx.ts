@@ -66,6 +66,8 @@ export interface FxOverlayJson {
   drift?: { vx?: number; vy?: number; wrap?: boolean };
   warp?: { type?: "wave" | "flag" | "bulge" | "jelly"; amp?: number; period_ms?: number; freq?: number };
   mesh?: number;
+  /** Sprite-sheet animation: image holds cols×rows frames, `count` used, looped at fps. */
+  frames?: { cols?: number; rows?: number; count?: number; fps?: number };
   trigger?: string | string[];
   duration_ms?: number;
   fade_ms?: number;
@@ -74,7 +76,7 @@ export interface FxOverlayJson {
 export interface FxDoc { particles: FxEmitterJson[]; overlays: FxOverlayJson[]; }
 
 export const FX_PRESETS = [
-  "starfield", "rain", "snow", "smoke", "fire", "embers", "sparkles", "fireflies", "meteors", "laser",
+  "starfield", "rain", "snow", "smoke", "fire", "flames", "embers", "sparkles", "fireflies", "meteors", "laser",
 ] as const;
 export type FxPreset = typeof FX_PRESETS[number];
 
@@ -114,6 +116,7 @@ const PRESETS: Record<string, PresetRow> = {
   snow:      row("soft",   "blend", "above", "top",    180, 25,   8,    14,   35,   70,   90,  20,  0, 1,    45, 4,  12,  0,    0,    0,   "flat",        0.85, 0,   0,   false, 12, 1,  false, [[255,255,255]]),
   smoke:     row("puff",   "blend", "above", "bottom", 50,  10,   3,    5,    40,   80,   270, 25,  0, 0.6,  30, 60, 120, 1.5,  -20,  20,  "fade_in_out", 0.35, 0,   0,   false, 4,  1,  false, [[150,150,150],[80,80,80]]),
   fire:      row("soft",   "add",   "above", "bottom", 140, 70,   0.6,  1.2,  120,  220,  270, 18,  0, 0.7,  40, 30, 60,  -0.6, 0,    0,   "fade_out",    0.9,  0,   0,   false, 1.5,1,  false, [[255,255,200],[255,170,40],[220,50,10],[90,10,0]]),
+  flames:    row("soft",   "add",   "above", "bottom", 220, 170,  0.45, 0.9,  170,  320,  270, 9,   0, 0.8,  140,70, 140, -0.75,0,    0,   "fade_out",    0.8,  0,   0,   false, 1,  1,  false, [[255,255,225],[255,200,60],[255,110,20],[190,28,6]]),
   embers:    row("dot",    "add",   "above", "bottom", 60,  12,   2,    4,    40,   90,   270, 35,  0, 1,    60, 3,  6,   0,    0,    0,   "fade_out",    1.0,  3.0, 0.5, false, 3,  1,  false, [[255,180,60],[255,60,10]]),
   sparkles:  row("star",   "add",   "above", "area",   120, 40,   0.4,  0.9,  0,    20,   270, 180, 0, 1,    0,  8,  22,  0,    -180, 180, "fade_in_out", 1.0,  0,   0,   false, 1,  1,  false, [[255,255,255],[255,220,120]]),
   fireflies: row("soft",   "add",   "above", "area",   25,  0,    0,    0,    10,   30,   0,   180, 0, 1,    80, 6,  10,  0,    0,    0,   "flat",        0.9,  0.5, 0.8, true,  0,  1,  false, [[200,255,120]]),
@@ -251,6 +254,7 @@ interface Overlay {
   swayPeriod: number; swayDeg: number; bobPeriod: number; bobPx: number;
   driftVX: number; driftVY: number; driftWrap: boolean;
   warp: number; warpAmp: number; warpPeriod: number; warpFreq: number; cols: number; rows: number;
+  frameCols: number; frameRows: number; frameCount: number; frameFps: number;
   idle: boolean; triggers: string[]; durationMs: number; fadeMs: number;
   activeUntil: number; activeSince: number; offX: number; offY: number; lastMs: number;
 }
@@ -398,10 +402,14 @@ export class FxSim {
         driftVX: (j.drift?.vx ?? 0) * sx, driftVY: (j.drift?.vy ?? 0) * sy, driftWrap: !!j.drift?.wrap,
         warp: j.warp ? ({ wave: 1, flag: 2, bulge: 3, jelly: 4 } as any)[j.warp.type ?? "wave"] ?? 0 : 0,
         warpAmp: (j.warp?.amp ?? 6) * s, warpPeriod: Math.max(50, j.warp?.period_ms ?? 2000), warpFreq: j.warp?.freq ?? 1,
-        cols: 1, rows: 1, idle: true, triggers: [], durationMs: Math.max(0, Math.trunc(j.duration_ms ?? 0)),
+        cols: 1, rows: 1,
+        frameCols: Math.max(1, Math.trunc(j.frames?.cols ?? 1)), frameRows: Math.max(1, Math.trunc(j.frames?.rows ?? 1)),
+        frameCount: 1, frameFps: Math.max(0, j.frames?.fps ?? 12),
+        idle: true, triggers: [], durationMs: Math.max(0, Math.trunc(j.duration_ms ?? 0)),
         fadeMs: Math.max(0, Math.trunc(j.fade_ms ?? 300)),
         activeUntil: 0, activeSince: 0, offX: 0, offY: 0, lastMs: 0,
       };
+      o.frameCount = Math.min(o.frameCols * o.frameRows, Math.max(1, Math.trunc(j.frames?.count ?? o.frameCols * o.frameRows)));
       if (o.warp) o.cols = o.rows = 12;
       if (typeof j.mesh === "number") o.cols = o.rows = Math.min(MAX_MESH, Math.max(1, Math.trunc(j.mesh)));
       const t = triggersOf(j.trigger, true); o.triggers = t.triggers; o.idle = t.idle;
@@ -420,8 +428,8 @@ export class FxSim {
     img.onload = () => {
       const r = o.j.rect;
       const rx = r?.[0] ?? 0, ry = r?.[1] ?? 0;
-      const rw = r && r[2] > 0 ? r[2] : img.naturalWidth;
-      const rh = r && r[3] > 0 ? r[3] : img.naturalHeight;
+      const rw = r && r[2] > 0 ? r[2] : img.naturalWidth / o.frameCols;    // one frame
+      const rh = r && r[3] > 0 ? r[3] : img.naturalHeight / o.frameRows;
       o.dst = { x: rx * this.sx, y: ry * this.sy, w: rw * this.sx, h: rh * this.sy };
       o.img = img;
     };
@@ -585,7 +593,10 @@ export class FxSim {
     ctx.globalCompositeOperation = o.blend === "add" ? "lighter" : "source-over";
     ctx.globalAlpha = clamp(alpha, 0, 1);
     const cols = o.cols, rows = o.rows;
-    const iw = o.img.naturalWidth, ih = o.img.naturalHeight;
+    // current sprite-sheet frame → source sub-rect
+    const fi = (o.frameCount > 1 && o.frameFps > 0) ? Math.trunc(tsec * o.frameFps) % o.frameCount : 0;
+    const iw = o.img.naturalWidth / o.frameCols, ih = o.img.naturalHeight / o.frameRows;
+    const fox = (fi % o.frameCols) * iw, foy = Math.trunc(fi / o.frameCols) * ih;
     // vertex grid (same displacement math as the Pi's mesh)
     const vx: number[] = [], vy: number[] = [];
     const maxd = 0.5 * Math.sqrt(o.dst.w * o.dst.w + o.dst.h * o.dst.h);
@@ -614,7 +625,7 @@ export class FxSim {
     for (let rr = 0; rr < rows; rr++) for (let cc = 0; cc < cols; cc++) {
       const i0 = rr * (cols + 1) + cc, i1 = i0 + 1, i2 = i0 + cols + 1, i3 = i2 + 1;
       const su = iw / cols, sv = ih / rows;
-      const tx0 = cc * su, ty0 = rr * sv;
+      const tx0 = fox + cc * su, ty0 = foy + rr * sv;
       this.texTri(ctx, o.img, [vx[i0], vy[i0]], [vx[i1], vy[i1]], [vx[i2], vy[i2]], [tx0, ty0], [tx0 + su, ty0], [tx0, ty0 + sv]);
       this.texTri(ctx, o.img, [vx[i1], vy[i1]], [vx[i3], vy[i3]], [vx[i2], vy[i2]], [tx0 + su, ty0], [tx0 + su, ty0 + sv], [tx0, ty0 + sv]);
     }
@@ -682,6 +693,6 @@ export function fxDocIntoEventMap(em: any, doc: FxDoc): void {
 
 /** Human labels for the panel. */
 export const PRESET_LABELS: Record<string, string> = {
-  starfield: "Starfield (moving stars)", rain: "Rain", snow: "Snow", smoke: "Smoke", fire: "Fire",
+  starfield: "Starfield (moving stars)", rain: "Rain", snow: "Snow", smoke: "Smoke", fire: "Fire (sparks)", flames: "Flames (dense fire)",
   embers: "Embers", sparkles: "Sparkles", fireflies: "Fireflies", meteors: "Meteors", laser: "Laser fire",
 };
