@@ -10,12 +10,15 @@
     doc = $bindable<FxDoc>({ particles: [], overlays: [] }),
     selected = $bindable(-1),
     editArea = $bindable(false),
+    overlaySelected = $bindable(-1),
     onTest = null,
     liveStats = null,
   }: {
     doc?: FxDoc;
     selected?: number;
     editArea?: boolean;
+    /** Selected overlay index (outlined + draggable on the preview). */
+    overlaySelected?: number;
     /** Fire a MSG_* into the preview (triggered emitters/overlays). */
     onTest?: ((key: string) => void) | null;
     liveStats?: (() => { live: number; emitters: number; overlays: number }) | null;
@@ -142,13 +145,13 @@
   function resetColors() { if (cur) delete cur.color; }
 
   // ── overlays
-  let oSel = $state(-1);
+  let oSel = $derived(overlaySelected);
   let ocur = $derived(oSel >= 0 && oSel < doc.overlays.length ? doc.overlays[oSel] : null);
   function addOverlay() {
     const o: FxOverlayJson = { name: `overlay ${doc.overlays.length + 1}`, image: "fx/overlay.png", rect: [0, 0, 0, 0], z: "above" };
-    doc.overlays.push(o); oSel = doc.overlays.length - 1;
+    doc.overlays.push(o); overlaySelected = doc.overlays.length - 1;
   }
-  function removeOverlay(i: number) { doc.overlays.splice(i, 1); if (oSel >= doc.overlays.length) oSel = doc.overlays.length - 1; }
+  function removeOverlay(i: number) { doc.overlays.splice(i, 1); if (overlaySelected >= doc.overlays.length) overlaySelected = doc.overlays.length - 1; }
   function oRect(i: number, v: number) { if (!ocur || Number.isNaN(v)) return; if (!ocur.rect) ocur.rect = [0, 0, 0, 0]; ocur.rect[i] = Math.round(v); }
   function oToggle(key: "breathe" | "sway" | "bob" | "drift" | "warp" | "pulse", on: boolean) {
     if (!ocur) return;
@@ -413,7 +416,7 @@
         {#each doc.overlays as o, i}
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
           <li class="flex items-center gap-1 text-[11px] rounded px-1.5 py-1 cursor-pointer {i === oSel ? 'bg-amber-400/15 text-amber-100' : 'hover:bg-white/5 text-zinc-300'}"
-              onclick={() => oSel = i}>
+              onclick={() => overlaySelected = i}>
             <input type="checkbox" checked={o.enabled !== false} class="accent-amber-400" onclick={(e) => e.stopPropagation()}
                    onchange={(e) => { const on = (e.currentTarget as HTMLInputElement).checked; if (on) delete o.enabled; else o.enabled = false; }} />
             <span class="flex-1 truncate">{o.name ?? `overlay ${i}`} <span class="text-zinc-500">· {o.image}</span></span>
@@ -438,7 +441,7 @@
             </label>
           {/each}
         </div>
-        <div class="text-[9px] text-zinc-600">w/h 0 = image's native size (source px).</div>
+        <div class="text-[9px] text-zinc-600">Drag the overlay on the preview to move it (blue outline). w/h 0 = one frame's native size (source px).</div>
         <div class="grid grid-cols-3 gap-2">
           <div>
             <label class="text-[10px] text-zinc-400" for="ov-z">Layer</label>

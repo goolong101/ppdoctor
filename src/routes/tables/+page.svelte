@@ -1913,6 +1913,7 @@
   let fxSavedJson = $state("");
   let fxSelected  = $state(-1);
   let fxEditArea  = $state(false);
+  let fxOverlaySel = $state(-1);
   let fxDirty     = $derived(JSON.stringify(fxCurrent) !== fxSavedJson);
   let b2sPanelTab = $state<"lamps" | "layers">("lamps");
   let b2sCanvasRef = $state<ReturnType<typeof B2SCanvas> | null>(null);
@@ -2003,6 +2004,7 @@
     fxCurrent   = doc;
     fxSavedJson = JSON.stringify(doc);
     fxSelected  = doc.particles.length ? 0 : -1;
+    fxOverlaySel = doc.overlays.length ? 0 : -1;
     fxEditArea  = false;
   });
 
@@ -4360,6 +4362,8 @@
                         fxSelected={b2sPanelTab === "layers" ? fxSelected : -1}
                         fxEditArea={b2sPanelTab === "layers" && fxEditArea}
                         onFxArea={(i, area) => { if (fxCurrent.particles[i]) { fxCurrent.particles[i].area = area; } fxEditArea = false; }}
+                        fxOverlaySelected={b2sPanelTab === "layers" ? fxOverlaySel : -1}
+                        onFxOverlayMove={(i, x, y) => { const o = fxCurrent.overlays[i]; if (o) { const r = o.rect ?? [0, 0, 0, 0]; o.rect = [x, y, r[2], r[3]]; } }}
                         fxImageResolver={fxResolveImage}
                       />
                       <!-- Editor overlay on top of B2SCanvas — same lamp
@@ -4432,7 +4436,7 @@
                       class="flex-1 px-2 py-1 rounded border {b2sPanelTab === 'layers' ? 'bg-sky-500/15 text-sky-200 border-sky-500/40' : 'bg-white/5 text-zinc-400 border-white/10 hover:bg-white/10'}">Layers{fxCurrent.particles.length + fxCurrent.overlays.length ? ` (${fxCurrent.particles.length + fxCurrent.overlays.length})` : ""}</button>
                   </div>
                   {#if b2sPanelTab === "layers"}
-                    <FxPanel bind:doc={fxCurrent} bind:selected={fxSelected} bind:editArea={fxEditArea}
+                    <FxPanel bind:doc={fxCurrent} bind:selected={fxSelected} bind:editArea={fxEditArea} bind:overlaySelected={fxOverlaySel}
                              onTest={(k) => b2sCanvasRef?.fxTrigger(k)}
                              liveStats={() => b2sCanvasRef?.fxStats() ?? { live: 0, emitters: 0, overlays: 0 }} />
                     <div class="glass rounded-xl p-3 w-72 flex flex-col gap-1.5">

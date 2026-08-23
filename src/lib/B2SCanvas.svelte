@@ -30,6 +30,8 @@
     fxSelected = -1,
     fxEditArea = false,
     onFxArea = null,
+    fxOverlaySelected = -1,
+    onFxOverlayMove = null,
     fxImageResolver = null,
   }: {
     xml?: string;
@@ -54,6 +56,9 @@
     fxSelected?: number;
     fxEditArea?: boolean;
     onFxArea?: ((index: number, area: [number, number, number, number]) => void) | null;
+    /** Selected overlay (index into fxDoc.overlays): outlined, and draggable on the preview. */
+    fxOverlaySelected?: number;
+    onFxOverlayMove?: ((index: number, x: number, y: number) => void) | null;
     fxImageResolver?: ((path: string) => Promise<string | null>) | null;
   } = $props();
 
@@ -176,6 +181,8 @@
   let geom = { fit: 1, ox: 0, oy: 0, sx: 1, sy: 1 };
   /** Area drag in progress (canvas px of the logical space). */
   let fxDrag: { x0: number; y0: number; x1: number; y1: number } | null = null;
+  /** Overlay move in progress: grab offset from the overlay's top-left (logical px). */
+  let ovDrag: { idx: number; gx: number; gy: number; x: number; y: number } | null = null;
   $effect(() => { fxSim.imageResolver = fxImageResolver; });
 
   function fxReload(sx: number, sy: number) {
@@ -193,18 +200,39 @@
     return { x: (px - geom.ox) / geom.fit, y: (py - geom.oy) / geom.fit };
   }
   function fxPointerDown(e: PointerEvent) {
-    if (!fxEditArea || fxSelected < 0) return;
     const p = toLogical(e); if (!p) return;
+    // Overlay drag takes priority when the pointer is inside the selected overlay.
+    if (fxOverlaySelected >= 0) {
+      const r = fxSim.overlayRect(fxOverlaySelected);
+      if (r && p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) {
+        ovDrag = { idx: fxOverlaySelected, gx: p.x - r.x, gy: p.y - r.y, x: r.x, y: r.y };
+        (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+        e.preventDefault();
+        return;
+      }
+    }
+    if (!fxEditArea || fxSelected < 0) return;
     fxDrag = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     e.preventDefault();
   }
   function fxPointerMove(e: PointerEvent) {
-    if (!fxDrag) return;
     const p = toLogical(e); if (!p) return;
+    if (ovDrag) {
+      ovDrag.x = p.x - ovDrag.gx; ovDrag.y = p.y - ovDrag.gy;
+      fxSim.setOverlayPos(ovDrag.idx, ovDrag.x, ovDrag.y);   // live follow, no reload
+      return;
+    }
+    if (!fxDrag) return;
     fxDrag.x1 = p.x; fxDrag.y1 = p.y;
   }
   function fxPointerUp(e: PointerEvent) {
+    if (ovDrag) {
+      const d = ovDrag; ovDrag = null;
+      // logical → source px; the doc update reloads the sim at the new rect
+      onFxOverlayMove?.(d.idx, Math.round(d.x / geom.sx), Math.round(d.y / geom.sy));
+      return;
+    }
     if (!fxDrag) return;
     const d = fxDrag; fxDrag = null;
     const x = Math.min(d.x0, d.x1), y = Math.min(d.y0, d.y1);
@@ -219,6 +247,16 @@
   /** Dashed outline of the selected emitter's area (or its point), plus the
    *  in-progress drag rectangle. Drawn in logical space. */
   function drawFxOutline(ctx: CanvasRenderingContext2D) {
+    if (fxOverlaySelected >= 0) {
+      const r = fxSim.overlayRect(fxOverlaySelected);
+      if (r) {
+        ctx.save();
+        ctx.lineWidth = 2 / geom.fit; ctx.setLineDash([6 / geom.fit, 4 / geom.fit]);
+        ctx.strokeStyle = "rgba(56,189,248,0.9)";   // sky — overlays; amber = particle areas
+        ctx.strokeRect(r.x, r.y, r.w, r.h);
+        ctx.restore();
+      }
+    }
     if (fxSelected < 0) return;
     ctx.save();
     ctx.lineWidth = 2 / geom.fit;
@@ -893,7 +931,7 @@
       {parseError}
     </div>
   {/if}
-  <canvas bind:this={canvas} use:setupResize class="w-full h-full block {fxEditArea && fxSelected >= 0 ? 'cursor-crosshair' : ''}"
+  <canvas bind:this={canvas} use:setupResize class="w-full h-full block {fxEditArea && fxSelected >= 0 ? 'cursor-crosshair' : (fxOverlaySelected >= 0 ? 'cursor-move' : '')}"
           onpointerdown={fxPointerDown} onpointermove={fxPointerMove} onpointerup={fxPointerUp} onpointercancel={fxPointerUp}></canvas>
   <!-- Always-on diagnostic strip so we can see exactly where the pipeline drops out:
        base · bulbs · motion · sprites · evt.attract presence · source.

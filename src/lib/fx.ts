@@ -355,6 +355,10 @@ export class FxSim {
 
   /** Screen-space area rect of emitter i (for the editor outline). */
   emitterArea(i: number) { return this.emitters[i]?.area ?? null; }
+  /** Screen-space rect of overlay i (with drift offset) for the editor. */
+  overlayRect(i: number) { const o = this.overlays[i]; return o && o.img ? { x: o.dst.x + o.offX, y: o.dst.y + o.offY, w: o.dst.w, h: o.dst.h } : null; }
+  /** Move overlay i (screen px) without reloading its texture. */
+  setOverlayPos(i: number, x: number, y: number) { const o = this.overlays[i]; if (o) { o.dst.x = x; o.dst.y = y; } }
   emitterPoint(i: number) { const e = this.emitters[i]; return e && e.r.spawnMode === 5 ? { x: e.px, y: e.py } : null; }
 
   load(doc: FxDoc | null, sx: number, sy: number, W = 1920, H = 1080) {
