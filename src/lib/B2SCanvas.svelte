@@ -4,6 +4,7 @@
            type EventMap } from "./b2s";
   import { parseB2SCache } from "./b2s_cache";
   import { bloomState } from "./bloom.svelte";
+  import { FxSim, type FxDoc } from "./fx";
 
   /** Accept EITHER:
    *  - xml (.directb2s source — full fidelity, dev-only on most user setups)
@@ -25,6 +26,11 @@
     overrideCycleSeconds = null,
     overrideMotion = null,
     overrideTail = null,
+    fxDoc = null,
+    fxSelected = -1,
+    fxEditArea = false,
+    onFxArea = null,
+    fxImageResolver = null,
   }: {
     xml?: string;
     cacheBuf?: ArrayBuffer | null;
@@ -39,6 +45,16 @@
     /** Per-preview override for attract motion + runner tail. */
     overrideMotion?: import("$lib/b2s").AttractMotion | null;
     overrideTail?: number | null;
+    /** Backglass FX (particles + overlays) — live port of the Pi's b2s_fx.cpp.
+     *  fxDoc = the event_map's "particles"/"overlays" arrays (source units).
+     *  fxSelected = index into fxDoc.particles whose area is outlined;
+     *  fxEditArea = drag on the canvas redefines that emitter's area/point
+     *  and reports it (source px) through onFxArea. */
+    fxDoc?: FxDoc | null;
+    fxSelected?: number;
+    fxEditArea?: boolean;
+    onFxArea?: ((index: number, area: [number, number, number, number]) => void) | null;
+    fxImageResolver?: ((path: string) => Promise<string | null>) | null;
   } = $props();
 
   let canvas = $state<HTMLCanvasElement | undefined>();
@@ -151,6 +167,76 @@
   // assembled layer is then composited onto the main canvas additively
   // (LIGHTER), matching the Pi's final FxB→base composite.
   let fxCanvas: HTMLCanvasElement | null = null;
+
+  // ── Backglass FX (particles/overlays) — same sim as the Pi (fx.ts) ──────
+  const fxSim = new FxSim();
+  let fxKey = "";                       // JSON(fxDoc)+scale → reload the sim on change
+  /** Geometry of the last frame (logical 1920×1080 → canvas px) so pointer
+   *  events can map back to source pixels. */
+  let geom = { fit: 1, ox: 0, oy: 0, sx: 1, sy: 1 };
+  /** Area drag in progress (canvas px of the logical space). */
+  let fxDrag: { x0: number; y0: number; x1: number; y1: number } | null = null;
+  $effect(() => { fxSim.imageResolver = fxImageResolver; });
+
+  function fxReload(sx: number, sy: number) {
+    const key = (fxDoc ? JSON.stringify(fxDoc) : "") + `|${sx.toFixed(5)}|${sy.toFixed(5)}`;
+    if (key === fxKey) return;
+    fxKey = key;
+    fxSim.load(fxDoc, sx, sy);
+  }
+  /** Client → logical (Pi screen px) coords. */
+  function toLogical(e: PointerEvent): { x: number; y: number } | null {
+    if (!canvas) return null;
+    const r = canvas.getBoundingClientRect();
+    const px = (e.clientX - r.left) * (canvas.width / r.width);
+    const py = (e.clientY - r.top) * (canvas.height / r.height);
+    return { x: (px - geom.ox) / geom.fit, y: (py - geom.oy) / geom.fit };
+  }
+  function fxPointerDown(e: PointerEvent) {
+    if (!fxEditArea || fxSelected < 0) return;
+    const p = toLogical(e); if (!p) return;
+    fxDrag = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    e.preventDefault();
+  }
+  function fxPointerMove(e: PointerEvent) {
+    if (!fxDrag) return;
+    const p = toLogical(e); if (!p) return;
+    fxDrag.x1 = p.x; fxDrag.y1 = p.y;
+  }
+  function fxPointerUp(e: PointerEvent) {
+    if (!fxDrag) return;
+    const d = fxDrag; fxDrag = null;
+    const x = Math.min(d.x0, d.x1), y = Math.min(d.y0, d.y1);
+    const w = Math.abs(d.x1 - d.x0), h = Math.abs(d.y1 - d.y0);
+    // logical → source px (what the event_map stores)
+    const area: [number, number, number, number] = [
+      Math.round(x / geom.sx), Math.round(y / geom.sy),
+      Math.round(w / geom.sx), Math.round(h / geom.sy),
+    ];
+    onFxArea?.(fxSelected, area);
+  }
+  /** Dashed outline of the selected emitter's area (or its point), plus the
+   *  in-progress drag rectangle. Drawn in logical space. */
+  function drawFxOutline(ctx: CanvasRenderingContext2D) {
+    if (fxSelected < 0) return;
+    ctx.save();
+    ctx.lineWidth = 2 / geom.fit;
+    ctx.setLineDash([8 / geom.fit, 6 / geom.fit]);
+    ctx.strokeStyle = "rgba(251,191,36,0.9)";
+    if (fxDrag) {
+      ctx.strokeRect(Math.min(fxDrag.x0, fxDrag.x1), Math.min(fxDrag.y0, fxDrag.y1),
+                     Math.abs(fxDrag.x1 - fxDrag.x0), Math.abs(fxDrag.y1 - fxDrag.y0));
+    } else {
+      const a = fxSim.emitterArea(fxSelected);
+      if (a) ctx.strokeRect(a.x, a.y, a.w, a.h);
+      const pt = fxSim.emitterPoint(fxSelected);
+      if (pt) { ctx.setLineDash([]); ctx.beginPath(); ctx.arc(pt.x, pt.y, 10 / geom.fit, 0, Math.PI * 2); ctx.stroke(); }
+    }
+    ctx.restore();
+  }
+  export function fxTrigger(key: string) { fxSim.trigger(key, performance.now()); }
+  export function fxStats() { return fxSim.stats; }
 
   // Pause the rAF loop when the document is hidden (PP Doctor backgrounded
   // behind another app). The 60fps render loop otherwise burns CPU even
@@ -571,7 +657,18 @@
     }
     const frameBaseEnd = performance.now();
 
-    if (!evt?.attract || motionIdxs.length === 0) return;
+    // Backglass FX slot 0 ("below"): between the base and the b2s lamp
+    // layers — mirrors Layers::draw() calling the fx hook before FxA/FxB.
+    // Sim runs in Pi screen space; the transform maps 1920×1080 → canvas.
+    geom = { fit, ox, oy, sx, sy };
+    fxReload(sx, sy);
+    ctx.setTransform(fit, 0, 0, fit, ox, oy);
+    fxSim.draw(ctx, 0, now);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+    let frameBulbsEnd = frameBaseEnd;
+    lampLayers: {
+    if (!evt?.attract || motionIdxs.length === 0) break lampLayers;
 
     // ── Match Pi attract pipeline exactly ──────────────────────────────────
     //
@@ -592,7 +689,7 @@
       fxCanvas.height = h;
     }
     const fx = fxCanvas.getContext("2d");
-    if (!fx) return;
+    if (!fx) break lampLayers;
     fx.clearRect(0, 0, w, h);
     fx.globalCompositeOperation = "source-over";
 
@@ -728,12 +825,21 @@
       const layerAlpha255 = lp.minAlpha + layerS * (lp.maxAlpha - lp.minAlpha);
       layerAlpha01 = Math.max(0, Math.min(255, layerAlpha255)) / 255;
     }
-    const frameBulbsEnd = performance.now();
+    frameBulbsEnd = performance.now();
     ctx.globalAlpha = layerAlpha01;
     ctx.globalCompositeOperation = "lighter";
     ctx.drawImage(fxCanvas, 0, 0);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = "source-over";
+    }  // lampLayers
+
+    // Backglass FX slots 1 ("above" the lamps) and 2 ("top"), then the
+    // editor outline of the selected emitter.
+    ctx.setTransform(fit, 0, 0, fit, ox, oy);
+    fxSim.draw(ctx, 1, now);
+    fxSim.draw(ctx, 2, now);
+    drawFxOutline(ctx);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
 
     // Frame telemetry — accumulate per-stage costs, log a summary once
     // per second. Stages: base = base bitmap + grill crop; bulbs = the
@@ -787,7 +893,8 @@
       {parseError}
     </div>
   {/if}
-  <canvas bind:this={canvas} use:setupResize class="w-full h-full block"></canvas>
+  <canvas bind:this={canvas} use:setupResize class="w-full h-full block {fxEditArea && fxSelected >= 0 ? 'cursor-crosshair' : ''}"
+          onpointerdown={fxPointerDown} onpointermove={fxPointerMove} onpointerup={fxPointerUp} onpointercancel={fxPointerUp}></canvas>
   <!-- Always-on diagnostic strip so we can see exactly where the pipeline drops out:
        base · bulbs · motion · sprites · evt.attract presence · source.
        If any of these don't progress as expected, the failure is upstream. -->

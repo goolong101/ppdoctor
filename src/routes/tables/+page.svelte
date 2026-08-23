@@ -5,6 +5,8 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import B2SCanvas from "$lib/B2SCanvas.svelte";
+  import FxPanel from "$lib/FxPanel.svelte";
+  import { fxDocFromEventMap, fxDocIntoEventMap, type FxDoc } from "$lib/fx";
   import Logo from "$lib/Logo.svelte";
   import { bulbAlpha as b2sBulbAlpha, type AttractSpec as B2SAttractSpec, type B2SBulb } from "$lib/b2s";
 
@@ -1888,6 +1890,28 @@
   let b2sSaved   = $state<B2SSettings>({ ...DEFAULT_SETTINGS });
   let b2sSavedAt = $state<string | null>(null);
 
+  // ── Backglass FX (Layers panel): the event_map's "particles"/"overlays"
+  // arrays, edited in place and previewed live by B2SCanvas with the same
+  // engine the Pi runs (fx.ts ↔ b2s_fx.cpp). fxSavedJson = last saved
+  // snapshot for dirty detection / revert.
+  let fxCurrent   = $state<FxDoc>({ particles: [], overlays: [] });
+  let fxSavedJson = $state("");
+  let fxSelected  = $state(-1);
+  let fxEditArea  = $state(false);
+  let fxDirty     = $derived(JSON.stringify(fxCurrent) !== fxSavedJson);
+  let b2sPanelTab = $state<"lamps" | "layers">("lamps");
+  let b2sCanvasRef = $state<ReturnType<typeof B2SCanvas> | null>(null);
+  /** Overlay PNGs live under the table's default_image/ (mirror or Pi). */
+  async function fxResolveImage(path: string): Promise<string | null> {
+    const folder = selected?.folder;
+    if (!folder) return null;
+    try {
+      const { cacheGetBase64 } = await import("$lib/api");
+      const b64 = await cacheGetBase64(sshHost(), folder, "default_image", path, cacheDir());
+      return b64 ? "data:image/png;base64," + b64 : null;
+    } catch { return null; }
+  }
+
   function loadSavedSettings(id: number, eventMap: any | null): SavedB2SSettings {
     // Detect schema by the presence of per-bulb fields under
     // attract_animation. If present, this is a VIDEO-PAIRED event_map
@@ -1958,6 +1982,13 @@
     b2sCurrent = { ...s.value };
     b2sSaved   = { ...s.value };
     b2sSavedAt = s.savedAt || null;
+    // FX layers come straight from the event_map (no localStorage — the
+    // file is the single source of truth the cabinet reads).
+    const doc = fxDocFromEventMap(em);
+    fxCurrent   = doc;
+    fxSavedJson = JSON.stringify(doc);
+    fxSelected  = doc.particles.length ? 0 : -1;
+    fxEditArea  = false;
   });
 
   let b2sSettingsDirty = $derived(
@@ -1966,7 +1997,8 @@
     b2sCurrent.attractMaxAlpha             !== b2sSaved.attractMaxAlpha     ||
     Math.abs(b2sCurrent.attractCycleSeconds - b2sSaved.attractCycleSeconds) > 1e-4 ||
     b2sCurrent.attractMotion               !== b2sSaved.attractMotion       ||
-    b2sCurrent.attractTail                 !== b2sSaved.attractTail
+    b2sCurrent.attractTail                 !== b2sSaved.attractTail         ||
+    fxDirty
   );
 
   /** Save flow:
@@ -2072,8 +2104,12 @@
         em.attract_cycle_seconds = b2sCurrent.attractCycleSeconds;
       }
 
+      // FX layers (particles/overlays) — written alongside; empty arrays
+      // drop the keys so untouched tables stay byte-identical.
+      fxDocIntoEventMap(em, fxCurrent);
       const json = JSON.stringify(em, null, 2);
       await cacheWriteText(sshHost(), folder, targetSlot, targetFile, json, cacheDir());
+      fxSavedJson = JSON.stringify(fxCurrent);
       // Only update in-memory b2sEventMapJson when writing to the
       // authored-image path — the generated-video path is a separate
       // event_map that doesn't drive the existing B2SCanvas preview.
@@ -2094,6 +2130,9 @@
   }
   function revertB2SSettings() {
     b2sCurrent = { ...b2sSaved };
+    try { fxCurrent = fxSavedJson ? JSON.parse(fxSavedJson) : { particles: [], overlays: [] }; } catch { /* keep */ }
+    fxSelected = fxCurrent.particles.length ? Math.min(fxSelected, fxCurrent.particles.length - 1) : -1;
+    fxEditArea = false;
   }
   function formatSavedAt(iso: string | null): string {
     if (!iso) return "never";
@@ -4292,6 +4331,7 @@
                       <div class="text-zinc-500 text-sm text-center px-8">{b2sError}</div>
                     {:else if b2sXml || b2sCacheBuf}
                       <B2SCanvas
+                        bind:this={b2sCanvasRef}
                         xml={b2sXml}
                         cacheBuf={b2sCacheBuf}
                         eventMapJson={b2sEventMapJson}
@@ -4301,6 +4341,11 @@
                         overrideCycleSeconds={b2sCurrent.attractCycleSeconds}
                         overrideMotion={b2sCurrent.attractMotion}
                         overrideTail={b2sCurrent.attractTail}
+                        fxDoc={fxCurrent}
+                        fxSelected={b2sPanelTab === "layers" ? fxSelected : -1}
+                        fxEditArea={b2sPanelTab === "layers" && fxEditArea}
+                        onFxArea={(i, area) => { if (fxCurrent.particles[i]) { fxCurrent.particles[i].area = area; } fxEditArea = false; }}
+                        fxImageResolver={fxResolveImage}
                       />
                       <!-- Editor overlay on top of B2SCanvas — same lamp
                            markers + right-click menu the video branch uses. -->
@@ -4362,6 +4407,32 @@
                 <!-- RIGHT: B2S adjustments panel (only shown when b2s preview
                      is active so we don't waste space on image/video previews). -->
                 {#if activePanel === "b2s"}
+                  <div class="flex flex-col gap-2 flex-shrink-0 self-start">
+                  <!-- Lamps | Layers tab strip. Layers = particle emitters +
+                       image overlays (same engine as the cabinet, fx.ts). -->
+                  <div class="flex gap-1 text-[11px]">
+                    <button type="button" onclick={() => { b2sPanelTab = "lamps"; fxEditArea = false; }}
+                      class="flex-1 px-2 py-1 rounded border {b2sPanelTab === 'lamps' ? 'bg-sky-500/15 text-sky-200 border-sky-500/40' : 'bg-white/5 text-zinc-400 border-white/10 hover:bg-white/10'}">Lamps</button>
+                    <button type="button" onclick={() => b2sPanelTab = "layers"}
+                      class="flex-1 px-2 py-1 rounded border {b2sPanelTab === 'layers' ? 'bg-sky-500/15 text-sky-200 border-sky-500/40' : 'bg-white/5 text-zinc-400 border-white/10 hover:bg-white/10'}">Layers{fxCurrent.particles.length + fxCurrent.overlays.length ? ` (${fxCurrent.particles.length + fxCurrent.overlays.length})` : ""}</button>
+                  </div>
+                  {#if b2sPanelTab === "layers"}
+                    <FxPanel bind:doc={fxCurrent} bind:selected={fxSelected} bind:editArea={fxEditArea}
+                             onTest={(k) => b2sCanvasRef?.fxTrigger(k)}
+                             liveStats={() => b2sCanvasRef?.fxStats() ?? { live: 0, emitters: 0, overlays: 0 }} />
+                    <div class="glass rounded-xl p-3 w-72 flex flex-col gap-1.5">
+                      <div class="flex gap-2">
+                        <button type="button" onclick={saveB2SSettings} disabled={!b2sSettingsDirty}
+                          class="flex-1 text-[11px] px-2 py-1.5 rounded {b2sSettingsDirty ? 'bg-amber-400/15 text-amber-200 border border-amber-400/40 hover:bg-amber-400/25' : 'bg-white/5 text-zinc-600 border border-white/5 cursor-not-allowed'} transition-colors font-medium"
+                          title="Write particles/overlays into b2s_event_map.json and push to the cabinet">Save</button>
+                        <button type="button" onclick={revertB2SSettings} disabled={!b2sSettingsDirty}
+                          class="flex-1 text-[11px] px-2 py-1.5 rounded {b2sSettingsDirty ? 'bg-white/5 text-zinc-300 border border-white/10 hover:bg-white/10' : 'bg-white/5 text-zinc-600 border border-white/5 cursor-not-allowed'} transition-colors font-medium">Revert</button>
+                      </div>
+                      <div class="text-[9px] text-zinc-500 leading-snug">
+                        {#if b2sSettingsDirty}<span class="text-amber-400">●</span> unsaved changes{:else}Saved — the cabinet hot-reloads the event_map in ~2 s after the push.{/if}
+                      </div>
+                    </div>
+                  {:else}
                   <aside class="glass rounded-xl p-4 w-64 flex-shrink-0 self-start flex flex-col gap-4">
                     <h3 class="text-xs uppercase tracking-wider text-zinc-400 font-medium">B2S lamp adjustment</h3>
 
@@ -4505,6 +4576,8 @@
                       </div>
                     </div>
                   </aside>
+                  {/if}
+                  </div>
                 {:else if activePanel === "image"}
                   <aside class="glass rounded-xl p-4 w-64 flex-shrink-0 self-start flex flex-col gap-4">
                     <h3 class="text-xs uppercase tracking-wider text-zinc-400 font-medium">Image bloom adjustment</h3>
