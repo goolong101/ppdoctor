@@ -30,6 +30,7 @@
     fxSelected = -1,
     fxEditArea = false,
     onFxArea = null,
+    onFxQuad = null,
     fxOverlaySelected = -1,
     onFxOverlayMove = null,
     onFxOverlayResize = null,
@@ -57,6 +58,8 @@
     fxSelected?: number;
     fxEditArea?: boolean;
     onFxArea?: ((index: number, area: [number, number, number, number]) => void) | null;
+    /** Trapezoid corner dragged → new quad (source px, TL TR BR BL). */
+    onFxQuad?: ((index: number, quad: [number, number][]) => void) | null;
     /** Selected overlay (index into fxDoc.overlays): outlined, and draggable on the preview. */
     fxOverlaySelected?: number;
     onFxOverlayMove?: ((index: number, x: number, y: number) => void) | null;
@@ -186,6 +189,8 @@
   let fxDrag: { x0: number; y0: number; x1: number; y1: number } | null = null;
   /** Overlay move in progress: grab offset from the overlay's top-left (logical px). */
   let ovDrag: { idx: number; gx: number; gy: number; x: number; y: number } | null = null;
+  /** Trapezoid corner drag in progress: which corner, current quad (logical px). */
+  let quadDrag: { idx: number; corner: number; q: { x: number; y: number }[] } | null = null;
   /** Overlay resize in progress (bottom-right handle). */
   let ovResize: { idx: number; x0: number; y0: number; w: number; h: number; aspect: number } | null = null;
   const HANDLE = 14;   // canvas px
@@ -207,6 +212,21 @@
   }
   function fxPointerDown(e: PointerEvent) {
     const p = toLogical(e); if (!p) return;
+    // Trapezoid corner handles of the selected emitter (always active when it has a quad).
+    if (fxSelected >= 0) {
+      const q = fxSim.emitterQuad(fxSelected);
+      if (q) {
+        const hs = HANDLE / geom.fit;
+        for (let k = 0; k < 4; k++) {
+          if (Math.abs(p.x - q[k].x) <= hs && Math.abs(p.y - q[k].y) <= hs) {
+            quadDrag = { idx: fxSelected, corner: k, q: q.map(c => ({ x: c.x, y: c.y })) };
+            (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+            e.preventDefault();
+            return;
+          }
+        }
+      }
+    }
     // Overlay drag takes priority when the pointer is inside the selected overlay.
     if (fxOverlaySelected >= 0) {
       const r = fxSim.overlayRect(fxOverlaySelected);
@@ -231,6 +251,7 @@
   }
   function fxPointerMove(e: PointerEvent) {
     const p = toLogical(e); if (!p) return;
+    if (quadDrag) { quadDrag.q[quadDrag.corner] = { x: p.x, y: p.y }; return; }
     if (ovResize) {
       let w = Math.max(4, p.x - ovResize.x0), h = Math.max(4, p.y - ovResize.y0);
       if (e.shiftKey) h = w / ovResize.aspect;
@@ -247,6 +268,11 @@
     fxDrag.x1 = p.x; fxDrag.y1 = p.y;
   }
   function fxPointerUp(e: PointerEvent) {
+    if (quadDrag) {
+      const d = quadDrag; quadDrag = null;
+      onFxQuad?.(d.idx, d.q.map(c => [Math.round(c.x / geom.sx), Math.round(c.y / geom.sy)] as [number, number]));
+      return;
+    }
     if (ovResize) {
       const d = ovResize; ovResize = null;
       onFxOverlayResize?.(d.idx, Math.round(d.w / geom.sx), Math.round(d.h / geom.sy));
@@ -294,6 +320,14 @@
     if (fxDrag) {
       ctx.strokeRect(Math.min(fxDrag.x0, fxDrag.x1), Math.min(fxDrag.y0, fxDrag.y1),
                      Math.abs(fxDrag.x1 - fxDrag.x0), Math.abs(fxDrag.y1 - fxDrag.y0));
+    } else if (quadDrag || fxSim.emitterQuad(fxSelected)) {
+      const q = quadDrag ? quadDrag.q : fxSim.emitterQuad(fxSelected)!;
+      ctx.beginPath(); ctx.moveTo(q[0].x, q[0].y);
+      for (let k = 1; k < 4; k++) ctx.lineTo(q[k].x, q[k].y);
+      ctx.closePath(); ctx.stroke();
+      const hs = HANDLE / geom.fit;
+      ctx.setLineDash([]); ctx.fillStyle = "rgba(251,191,36,0.95)";
+      for (let k = 0; k < 4; k++) ctx.fillRect(q[k].x - hs / 2, q[k].y - hs / 2, hs, hs);
     } else {
       const a = fxSim.emitterArea(fxSelected);
       if (a) ctx.strokeRect(a.x, a.y, a.w, a.h);

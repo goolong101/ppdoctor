@@ -22,6 +22,8 @@ export interface FxEmitterJson {
   blend?: "add" | "blend";
   spawn?: "area" | "top" | "bottom" | "left" | "right" | "point";
   area?: [number, number, number, number];
+  /** Trapezoid region TL,TR,BR,BL (source px); overrides area. */
+  quad?: [[number, number], [number, number], [number, number], [number, number]];
   point?: [number, number];
   clip?: [number, number, number, number];
   max?: number;
@@ -82,11 +84,11 @@ export interface FxOverlayJson {
 export interface FxDoc { particles: FxEmitterJson[]; overlays: FxOverlayJson[]; }
 
 export const FX_PRESETS = [
-  "starfield", "rain", "snow", "smoke", "fire", "flames", "embers", "sparkles", "fireflies", "meteors", "laser",
+  "starfield", "rain", "snow", "smoke", "fire", "flames", "embers", "sparkles", "fireflies", "meteors", "laser", "bubbles",
 ] as const;
 export type FxPreset = typeof FX_PRESETS[number];
 
-export const SPRITE_NAMES = ["soft", "dot", "streak", "star", "puff", "ring"] as const;
+export const SPRITE_NAMES = ["soft", "dot", "streak", "star", "puff", "ring", "bubble"] as const;
 
 // ── caps (b2s_fx.cpp) ─────────────────────────────────────────────────────────
 const SPRITE_SIZE = 64;
@@ -127,6 +129,7 @@ const PRESETS: Record<string, PresetRow> = {
   sparkles:  row("star",   "add",   "above", "area",   120, 40,   0.4,  0.9,  0,    20,   270, 180, 0, 1,    0,  8,  22,  0,    -180, 180, "fade_in_out", 1.0,  0,   0,   false, 1,  1,  false, [[255,255,255],[255,220,120]]),
   fireflies: row("soft",   "add",   "above", "area",   25,  0,    0,    0,    10,   30,   0,   180, 0, 1,    80, 6,  10,  0,    0,    0,   "flat",        0.9,  0.5, 0.8, true,  0,  1,  false, [[200,255,120]]),
   meteors:   row("streak", "add",   "above", "right",  12,  0.6,  1.2,  2.0,  500,  800,  160, 8,   0, 1,    0,  6,  10,  0,    0,    0,   "fade_out",    0.9,  0,   0,   false, 0,  8,  true,  [[255,240,200],[255,140,40]]),
+  bubbles:   row("bubble", "blend", "above", "bottom", 60,  7,    4.0,  9.0,  30,   75,   270, 12,  0, 1,    70, 8,  48,  0.25, 0,    0,   "fade_in_out", 0.75, 0.3, 0.25, false, 6,  1,  false, [[235,250,255],[180,225,255]]),
   laser:     row("streak", "add",   "above", "point",  40,  0,    0.15, 0.25, 1400, 1800, 0,   1,   0, 1,    0,  8,  12,  0,    0,    0,   "fade_out",    1.0,  0,   0,   false, 0,  10, true,  [[255,60,60]]),
 };
 
@@ -142,6 +145,7 @@ export interface FxResolved {
   ramp: FxColor[]; alphaCurve: number; alphaMax: number; twinkleHz: number; twinkleAmt: number; prewarmS: number;
   pulsePeriod: number; pulseDepth: number;
   area: [number, number, number, number] | null; point: [number, number] | null; clip: [number, number, number, number] | null;
+  quad: [number, number][] | null;
 }
 
 function slotFromName(s: string | undefined, def: FxSlot): FxSlot {
@@ -200,7 +204,7 @@ export function resolveEmitter(j: FxEmitterJson): FxResolved {
     sizeMin: p?.sizeMin ?? 4, sizeMax: p?.sizeMax ?? 8, grow: p?.grow ?? 0, aspect: p?.aspect ?? 1, align: p?.align ?? false,
     rotMin: p?.rotMin ?? 0, rotMax: p?.rotMax ?? 0, ramp: p?.ramp ?? [[255, 255, 255]],
     alphaCurve: alphaCurveFromName(p?.alpha, 1), alphaMax: p?.alphaMax ?? 1, twinkleHz: p?.twHz ?? 0, twinkleAmt: p?.twAmt ?? 0,
-    prewarmS: p?.prewarm ?? 0, pulsePeriod: 0, pulseDepth: 0, area: null, point: null, clip: null,
+    prewarmS: p?.prewarm ?? 0, pulsePeriod: 0, pulseDepth: 0, area: null, point: null, clip: null, quad: null,
   };
   // explicit overrides (same precedence as C++)
   r.slot = slotFromName(j.z, r.slot);
@@ -233,6 +237,11 @@ export function resolveEmitter(j: FxEmitterJson): FxResolved {
   if (typeof j.prewarm_s === "number") r.prewarmS = j.prewarm_s;
   if (j.pulse && typeof j.pulse === "object") { r.pulsePeriod = j.pulse.period_ms ?? 3000; r.pulseDepth = Math.min(1, Math.max(0, j.pulse.depth ?? 0.5)); }
   if (Array.isArray(j.area) && j.area.length >= 4) r.area = [+j.area[0], +j.area[1], +j.area[2], +j.area[3]];
+  if (Array.isArray(j.quad) && j.quad.length >= 4 && j.quad.every(q => Array.isArray(q) && q.length >= 2)) {
+    r.quad = j.quad.slice(0, 4).map(q => [+q[0], +q[1]] as [number, number]);
+    const xs = r.quad.map(q => q[0]), ys = r.quad.map(q => q[1]);
+    r.area = [Math.min(...xs), Math.min(...ys), Math.max(1, Math.max(...xs) - Math.min(...xs)), Math.max(1, Math.max(...ys) - Math.min(...ys))];
+  }
   if (Array.isArray(j.point) && j.point.length >= 2) { r.point = [+j.point[0], +j.point[1]]; if (j.spawn === undefined) r.spawnMode = 5; }
   if (Array.isArray(j.clip) && j.clip.length >= 4) r.clip = [+j.clip[0], +j.clip[1], +j.clip[2], +j.clip[3]];
   const t = triggersOf(j.trigger, true); r.triggers = t.triggers; r.idle = t.idle;
@@ -251,6 +260,7 @@ interface Particle {
 interface Emitter {
   r: FxResolved;              // SCREEN units after scaling (speed/size/gravity/wander/wind)
   area: { x: number; y: number; w: number; h: number };
+  quad: { x: number; y: number }[] | null;   // screen px, TL TR BR BL
   px: number; py: number;
   clip: { x: number; y: number; w: number; h: number } | null;
   pool: Particle[]; spawnAcc: number; activeUntil: number; lastMs: number; clock: number;
@@ -308,6 +318,11 @@ function makeSprite(kind: number): HTMLCanvasElement {
                 a = clamp(core + ax * ax + ay * ay, 0, 1); break; }
       case 4: { let t = clamp(1 - r, 0, 1); t = t * t * (3 - 2 * t); a = t * (0.55 + 0.45 * vnoise(x * 0.18, y * 0.18)); break; }
       case 5: { const d = Math.abs(r - 0.7); a = clamp(1 - d * 5, 0, 1); a *= a; break; }
+      case 6: { let rim = clamp(1 - Math.abs(r - 0.86) * 9, 0, 1); rim *= rim;
+                  const body = r < 0.86 ? 0.10 * (0.4 + 0.6 * r) : 0;
+                  const hx = dx + 0.38, hy = dy + 0.42, hd = Math.sqrt(hx * hx + hy * hy);
+                  let hi = clamp(1 - hd * 4, 0, 1); hi *= hi;
+                  a = clamp(rim * 0.9 + body + hi * 0.9, 0, 1); if (r > 1) a = 0; break; }
     }
     const i = (y * N + x) * 4;
     img.data[i] = 255; img.data[i + 1] = 255; img.data[i + 2] = 255; img.data[i + 3] = Math.round(clamp(a, 0, 1) * 255);
@@ -358,6 +373,8 @@ export class FxSim {
 
   /** Screen-space area rect of emitter i (for the editor outline). */
   emitterArea(i: number) { return this.emitters[i]?.area ?? null; }
+  /** Screen-space trapezoid of emitter i (null if it uses a plain area). */
+  emitterQuad(i: number) { return this.emitters[i]?.quad ?? null; }
   /** Screen-space rect of overlay i (with drift offset) for the editor. */
   overlayRect(i: number) { const o = this.overlays[i]; return o && o.img ? { x: o.dst.x + o.offX, y: o.dst.y + o.offY, w: o.dst.w, h: o.dst.h } : null; }
   /** Move overlay i (screen px) without reloading its texture. */
@@ -391,7 +408,8 @@ export class FxSim {
       if (r.maxN > budget) r.maxN = budget;
       if (r.maxN <= 0) continue;
       budget -= r.maxN;
-      const e: Emitter = { r, area, px, py, clip, pool: [], spawnAcc: 0, activeUntil: 0, lastMs: 0, clock: 0 };
+      const quad = src.quad ? src.quad.map(q => ({ x: q[0] * sx, y: q[1] * sy })) : null;
+      const e: Emitter = { r, area, quad, px, py, clip, pool: [], spawnAcc: 0, activeUntil: 0, lastMs: 0, clock: 0 };
       for (let i = 0; i < r.maxN; i++) e.pool.push({ x: 0, y: 0, vx: 0, vy: 0, age: 0, life: 0, maxLife: 0, size: 1, rot: 0, rotV: 0, seed: 0, alive: false });
       if (r.idle) {
         if (r.wrap || (r.lifeMax <= 0 && r.rate <= 0)) {
@@ -492,6 +510,24 @@ export class FxSim {
     const p = e.pool.find(q => !q.alive);
     if (!p) return;
     const a = e.area, r = e.r;
+    if (e.quad && r.spawnMode !== 5) {
+      const q = e.quad;
+      const edge = (i0: number, i1: number) => { const t = frand(); p.x = q[i0].x + (q[i1].x - q[i0].x) * t; p.y = q[i0].y + (q[i1].y - q[i0].y) * t; };
+      switch (r.spawnMode) {
+        case 1: edge(0, 1); p.y -= r.sizeMax * 0.5; break;
+        case 2: edge(3, 2); p.y += r.sizeMax * 0.5; break;
+        case 3: edge(0, 3); break;
+        case 4: edge(1, 2); break;
+        default: {
+          const tri = (A: {x:number;y:number}, B: {x:number;y:number}, C: {x:number;y:number}) => Math.abs((B.x - A.x) * (C.y - A.y) - (C.x - A.x) * (B.y - A.y)) * 0.5;
+          const a1 = tri(q[0], q[1], q[2]), a2 = tri(q[0], q[2], q[3]);
+          const B = (frand() * (a1 + a2) < a1) ? q[1] : q[3];
+          let u = frand(), v = frand(); if (u + v > 1) { u = 1 - u; v = 1 - v; }
+          p.x = q[0].x + (B.x - q[0].x) * u + (q[2].x - q[0].x) * v;
+          p.y = q[0].y + (B.y - q[0].y) * u + (q[2].y - q[0].y) * v;
+        }
+      }
+    } else
     switch (r.spawnMode) {
       case 1: p.x = a.x + frand() * a.w; p.y = a.y - r.sizeMax; break;
       case 2: p.x = a.x + frand() * a.w; p.y = a.y + a.h + r.sizeMax * 0.5; break;
@@ -538,6 +574,15 @@ export class FxSim {
       if (r.wrap) {
         if (p.x < a.x - margin) p.x += a.w + 2 * margin; else if (p.x > a.x + a.w + margin) p.x -= a.w + 2 * margin;
         if (p.y < a.y - margin) p.y += a.h + 2 * margin; else if (p.y > a.y + a.h + margin) p.y -= a.h + 2 * margin;
+      } else if (e.quad) {
+        const q = e.quad, tol = p.size * 0.5 + 2; let inside = true;
+        for (let k = 0; k < 4 && inside; k++) {
+          const A = q[k], B = q[(k + 1) & 3];
+          const ex = B.x - A.x, ey = B.y - A.y, len = Math.sqrt(ex * ex + ey * ey) + 1e-3;
+          const cross = (ex * (p.y - A.y) - ey * (p.x - A.x)) / len;
+          if (cross < -tol) inside = false;
+        }
+        if (!inside) p.alive = false;
       } else if (p.x < a.x - margin || p.x > a.x + a.w + margin || p.y < a.y - margin || p.y > a.y + a.h + margin) {
         p.alive = false;
       }
@@ -730,6 +775,6 @@ export function fxBudget(doc: FxDoc): { total: number; rows: { name: string; wan
 
 /** Human labels for the panel. */
 export const PRESET_LABELS: Record<string, string> = {
-  starfield: "Starfield (moving stars)", rain: "Rain", snow: "Snow", smoke: "Smoke", fire: "Fire (sparks)", flames: "Flames (dense fire)",
+  starfield: "Starfield (moving stars)", bubbles: "Bubbles", rain: "Rain", snow: "Snow", smoke: "Smoke", fire: "Fire (sparks)", flames: "Flames (dense fire)",
   embers: "Embers", sparkles: "Sparkles", fireflies: "Fireflies", meteors: "Meteors", laser: "Laser fire",
 };

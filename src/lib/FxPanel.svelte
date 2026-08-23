@@ -117,10 +117,24 @@
   }
 
   // area UI
-  let areaFull = $derived(cur ? !cur.area : true);
+  let areaFull = $derived(cur ? !(cur.area || cur.quad) : true);
+  let isQuad = $derived(cur ? !!cur.quad : false);
   function setAreaFull(full: boolean) {
     if (!cur) return;
-    if (full) { delete cur.area; editArea = false; } else { cur.area = [0, 0, 1000, 600]; }
+    if (full) { delete cur.area; delete cur.quad; editArea = false; } else { cur.area = [0, 0, 1000, 600]; }
+  }
+  /** Toggle trapezoid: box → its 4 corners; trapezoid → bounding box. */
+  function setQuad(on: boolean) {
+    if (!cur) return;
+    if (on) {
+      const a = cur.area ?? [0, 0, 1000, 600];
+      cur.quad = [[a[0], a[1]], [a[0] + a[2], a[1]], [a[0] + a[2], a[1] + a[3]], [a[0], a[1] + a[3]]];
+      delete cur.area; editArea = false;
+    } else if (cur.quad) {
+      const xs = cur.quad.map(q => q[0]), ys = cur.quad.map(q => q[1]);
+      cur.area = [Math.min(...xs), Math.min(...ys), Math.max(1, Math.max(...xs) - Math.min(...xs)), Math.max(1, Math.max(...ys) - Math.min(...ys))];
+      delete cur.quad;
+    }
   }
   function setAreaField(i: number, v: number) {
     if (!cur || !cur.area || Number.isNaN(v)) return;
@@ -281,13 +295,18 @@
             <label class="text-[10px] text-zinc-400 flex items-center gap-1">
               <input type="checkbox" checked={areaFull} onchange={(e) => setAreaFull((e.currentTarget as HTMLInputElement).checked)} class="accent-amber-400" /> Full screen area
             </label>
-            {#if !areaFull}
+            {#if !areaFull && !isQuad}
               <button type="button" onclick={() => editArea = !editArea}
                       class="text-[10px] px-1.5 py-0.5 rounded border {editArea ? 'bg-amber-400/20 text-amber-200 border-amber-400/50' : 'bg-white/5 text-zinc-300 border-white/10 hover:bg-white/10'}"
                       title="Drag a rectangle on the preview">{editArea ? "drawing… drag on preview" : "Draw on preview"}</button>
             {/if}
           </div>
-          {#if !areaFull && cur.area}
+          {#if !areaFull}
+            <label class="text-[10px] text-zinc-400 flex items-center gap-1 mt-1">
+              <input type="checkbox" checked={isQuad} onchange={(e) => setQuad((e.currentTarget as HTMLInputElement).checked)} class="accent-amber-400" /> Trapezoid (drag the 4 corners on the preview)
+            </label>
+          {/if}
+          {#if !areaFull && cur.area && !isQuad}
             <div class="grid grid-cols-4 gap-1 mt-1">
               {#each ["x", "y", "w", "h"] as k, i}
                 <label class="text-[9px] text-zinc-500">{k}
