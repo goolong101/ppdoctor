@@ -397,9 +397,24 @@
           if (xml) {
             b2sXml = xml;
             log("[b2s]", `directb2s table=${selected.id} chars=${xml.length} (cache unavailable, fallback)`);
-            const emPath = selected.localDirectb2s.replace(/backglass\.directb2s$/, "b2s_event_map.json");
-            if (await localPathExists(emPath)) {
-              b2sEventMapJson = await readLocalText(emPath);
+            // Event map: the CABINET's copy is the truth (mirror → SSH) —
+            // the gitea sibling is only a last resort. Reading the gitea
+            // copy first showed a stale map with none of the cabinet's
+            // particle/overlay layers (Star Trek, 2026-08-23).
+            let emB64 = "";
+            try { emB64 = await cacheGetBase64(ip, selected.folder, "default_image", "b2s_event_map.json", cacheDir()); } catch { emB64 = ""; }
+            if (!emB64) {
+              try { emB64 = await sshGetBase64(ip, `${PI_MEDIA}/${selected.folder}/default_image/b2s_event_map.json`); } catch { emB64 = ""; }
+            }
+            if (emB64) {
+              b2sEventMapJson = atob(emB64);
+              log("[b2s]", `event_map from cabinet mirror/ssh for table=${selected.id} (${b2sEventMapJson.length} chars)`);
+            } else {
+              const emPath = selected.localDirectb2s.replace(/backglass\.directb2s$/, "b2s_event_map.json");
+              if (await localPathExists(emPath)) {
+                b2sEventMapJson = await readLocalText(emPath);
+                log("[b2s]", `event_map from gitea sibling (no cabinet copy) table=${selected.id}`);
+              }
             }
             lruPut(selected.id, { xml: b2sXml, cacheBuf: null, eventMapJson: b2sEventMapJson });
             log("[b2s]", `load DONE (directb2s) table=${selected.id} total=${Math.round(performance.now() - t0)}ms`);
