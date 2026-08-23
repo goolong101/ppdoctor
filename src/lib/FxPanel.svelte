@@ -21,10 +21,13 @@
     liveStats?: (() => { live: number; emitters: number; overlays: number }) | null;
   } = $props();
 
+  // Canonical event names = the Pi's commands.json (MSG_BALLSAVED / MSG_BALLDRAIN
+  // have no underscore). The renderer triggers FX by this canonical name.
   const EVENTS = [
-    "MSG_GAME_START", "MSG_GAMEOVER", "MSG_BALL_SAVED", "MSG_BALL_DRAIN", "MSG_JACKPOT", "MSG_MULTIBALL",
-    "MSG_EXTRABALL", "MSG_SKILLSHOT", "MSG_REPLAY", "MSG_COMBO", "MSG_BONUS", "MSG_LOCK", "MSG_SMACK",
-    "MSG_SMACK_GOOD", "MSG_SMACK_BAD", "MSG_TILT", "MSG_NEW_HIGHSCORE",
+    "MSG_GAME_START", "MSG_GAMEOVER", "MSG_BALLSAVED", "MSG_BALLDRAIN", "MSG_JACKPOT", "MSG_MULTIBALL",
+    "MSG_MULTIBALL_END", "MSG_EXTRABALL", "MSG_SKILLSHOT", "MSG_REPLAY", "MSG_COMBO", "MSG_BONUS", "MSG_LOCK",
+    "MSG_LOCK_CLEARED", "MSG_SMACK", "MSG_TILT", "MSG_BALL_LOADED", "MSG_MATCH_RESULT", "MSG_NEW_HIGHSCORE",
+    "MSG_CREDITS",
   ];
 
   let addPreset = $state<string>("starfield");
