@@ -64,6 +64,9 @@ export interface FxOverlayJson {
   pivot?: [number, number];
   breathe?: { period_ms?: number; scale_x?: number; scale_y?: number; alpha?: number };
   sway?: { period_ms?: number; deg?: number };
+  /** Static rotation (deg) and continuous spin (deg/s) about the pivot. */
+  angle?: number;
+  spin?: number;
   bob?: { period_ms?: number; px?: number };
   drift?: { vx?: number; vy?: number; wrap?: boolean };
   pulse?: { period_ms?: number; depth?: number };
@@ -256,7 +259,7 @@ interface Overlay {
   j: FxOverlayJson; img: HTMLImageElement | null; dst: { x: number; y: number; w: number; h: number };
   slot: FxSlot; blend: "add" | "blend"; alpha: number; pivotX: number; pivotY: number;
   breathePeriod: number; breatheSX: number; breatheSY: number; breatheAlpha: number;
-  swayPeriod: number; swayDeg: number; bobPeriod: number; bobPx: number;
+  swayPeriod: number; swayDeg: number; angleDeg: number; spinDegS: number; bobPeriod: number; bobPx: number;
   driftVX: number; driftVY: number; driftWrap: boolean;
   pulsePeriod: number; pulseDepth: number;
   warp: number; warpAmp: number; warpPeriod: number; warpFreq: number; cols: number; rows: number;
@@ -410,6 +413,7 @@ export class FxSim {
         breathePeriod: j.breathe ? (j.breathe.period_ms ?? 4000) : 0, breatheSX: j.breathe?.scale_x ?? 0,
         breatheSY: j.breathe ? (j.breathe.scale_y ?? 0.02) : 0, breatheAlpha: clamp(j.breathe?.alpha ?? 0, 0, 1),
         swayPeriod: j.sway ? (j.sway.period_ms ?? 3000) : 0, swayDeg: j.sway ? (j.sway.deg ?? 2) : 0,
+        angleDeg: j.angle ?? 0, spinDegS: j.spin ?? 0,
         bobPeriod: j.bob ? (j.bob.period_ms ?? 3000) : 0, bobPx: j.bob ? (j.bob.px ?? 6) * sy : 0,
         driftVX: (j.drift?.vx ?? 0) * sx, driftVY: (j.drift?.vy ?? 0) * sy, driftWrap: !!j.drift?.wrap,
         pulsePeriod: j.pulse ? (j.pulse.period_ms ?? 3000) : 0, pulseDepth: j.pulse ? clamp(j.pulse.depth ?? 0.5, 0, 1) : 0,
@@ -600,7 +604,7 @@ export class FxSim {
     const scaleX = 1 + o.breatheSX * bp, scaleY = 1 + o.breatheSY * bp;
     let alpha = o.alpha * vis * (1 - o.breatheAlpha * (0.5 - 0.5 * bp));
     if (o.pulsePeriod > 0 && o.pulseDepth > 0) alpha *= 1 - o.pulseDepth * (0.5 - 0.5 * phase(o.pulsePeriod));
-    const swayRad = o.swayDeg * phase(o.swayPeriod) * PI / 180;
+    const swayRad = (o.swayDeg * phase(o.swayPeriod) + o.angleDeg + o.spinDegS * tsec) * PI / 180;
     const bob = o.bobPx * phase(o.bobPeriod);
     const pvx = o.dst.x + o.dst.w * o.pivotX, pvy = o.dst.y + o.dst.h * o.pivotY;
     const cs = Math.cos(swayRad), sn = Math.sin(swayRad);

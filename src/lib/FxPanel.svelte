@@ -484,6 +484,20 @@
           </div>
         {/if}
 
+        <!-- rotation / spin -->
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <div class="flex items-baseline justify-between"><label class="text-[10px] text-zinc-400" for="ov-angle">Rotation</label><span class="text-[10px] font-mono text-zinc-500">{ocur.angle ?? 0}°</span></div>
+            <input id="ov-angle" type="range" min="-180" max="180" step="1" value={ocur.angle ?? 0}
+                   oninput={(e) => { const v = +(e.currentTarget as HTMLInputElement).value; if (v === 0) delete ocur!.angle; else ocur!.angle = v; }} class="w-full accent-amber-400" />
+          </div>
+          <div>
+            <div class="flex items-baseline justify-between"><label class="text-[10px] text-zinc-400" for="ov-spin">Spin</label><span class="text-[10px] font-mono text-zinc-500">{ocur.spin ?? 0}°/s</span></div>
+            <input id="ov-spin" type="range" min="-360" max="360" step="5" value={ocur.spin ?? 0}
+                   oninput={(e) => { const v = +(e.currentTarget as HTMLInputElement).value; if (v === 0) delete ocur!.spin; else ocur!.spin = v; }} class="w-full accent-amber-400" />
+          </div>
+        </div>
+
         {#snippet motion(label: string, key: "breathe" | "sway" | "bob" | "drift" | "warp" | "pulse")}
           <label class="text-[10px] text-zinc-300 flex items-center gap-1">
             <input type="checkbox" checked={!!ocur?.[key]} onchange={(e) => oToggle(key, (e.currentTarget as HTMLInputElement).checked)} class="accent-amber-400" /> {label}
