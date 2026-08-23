@@ -345,7 +345,7 @@ export class FxSim {
 
   /** Screen-space area rect of emitter i (for the editor outline). */
   emitterArea(i: number) { return this.emitters[i]?.area ?? null; }
-  emitterPoint(i: number) { const e = this.emitters[i]; return e ? { x: e.px, y: e.py } : null; }
+  emitterPoint(i: number) { const e = this.emitters[i]; return e && e.r.spawnMode === 5 ? { x: e.px, y: e.py } : null; }
 
   load(doc: FxDoc | null, sx: number, sy: number, W = 1920, H = 1080) {
     this.emitters = []; this.overlays = [];

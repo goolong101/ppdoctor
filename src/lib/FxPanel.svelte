@@ -308,7 +308,7 @@
           {@render slider("Speed max", "fx-spmax", eff.speedMax, 0, 2000, 1, `${Math.round(eff.speedMax)} px/s`, (v) => setRange("speed", Math.min(v, eff!.speedMin), v, def.speedMin, def.speedMax))}
         </div>
         <div class="grid grid-cols-2 gap-2">
-          {@render slider("Direction", "fx-angle", eff.angle, 0, 360, 1, `${eff.angle}° (0→ 90↓ 180← 270↑)`, (v) => setNum("angle", v, def.angle))}
+          {@render slider("Direction", "fx-angle", eff.angle, 0, 360, 1, `${eff.angle}° ${eff.angle === 0 ? "→" : eff.angle === 90 ? "↓" : eff.angle === 180 ? "←" : eff.angle === 270 ? "↑" : ""}`, (v) => setNum("angle", v, def.angle))}
           {@render slider("Spread", "fx-spread", eff.spread, 0, 180, 1, `±${eff.spread}°`, (v) => setNum("spread", v, def.spread))}
         </div>
         <div class="grid grid-cols-2 gap-2">
