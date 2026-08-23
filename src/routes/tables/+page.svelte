@@ -4364,6 +4364,7 @@
                         onFxArea={(i, area) => { if (fxCurrent.particles[i]) { fxCurrent.particles[i].area = area; } fxEditArea = false; }}
                         fxOverlaySelected={b2sPanelTab === "layers" ? fxOverlaySel : -1}
                         onFxOverlayMove={(i, x, y) => { const o = fxCurrent.overlays[i]; if (o) { const r = o.rect ?? [0, 0, 0, 0]; o.rect = [x, y, r[2], r[3]]; } }}
+                        onFxOverlayResize={(i, w, h) => { const o = fxCurrent.overlays[i]; if (o) { const r = o.rect ?? [0, 0, 0, 0]; o.rect = [r[0], r[1], w, h]; } }}
                         fxImageResolver={fxResolveImage}
                       />
                       <!-- Editor overlay on top of B2SCanvas — same lamp

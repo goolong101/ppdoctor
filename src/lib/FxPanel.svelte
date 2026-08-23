@@ -441,7 +441,7 @@
             </label>
           {/each}
         </div>
-        <div class="text-[9px] text-zinc-600">Drag the overlay on the preview to move it (blue outline). w/h 0 = one frame's native size (source px).</div>
+        <div class="text-[9px] text-zinc-600">On the preview: drag the overlay to move it, drag the blue corner handle to resize (Shift = keep aspect). w/h 0 = one frame's native size (source px).</div>
         <div class="grid grid-cols-3 gap-2">
           <div>
             <label class="text-[10px] text-zinc-400" for="ov-z">Layer</label>

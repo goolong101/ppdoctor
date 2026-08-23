@@ -32,6 +32,7 @@
     onFxArea = null,
     fxOverlaySelected = -1,
     onFxOverlayMove = null,
+    onFxOverlayResize = null,
     fxImageResolver = null,
   }: {
     xml?: string;
@@ -59,6 +60,8 @@
     /** Selected overlay (index into fxDoc.overlays): outlined, and draggable on the preview. */
     fxOverlaySelected?: number;
     onFxOverlayMove?: ((index: number, x: number, y: number) => void) | null;
+    /** Bottom-right corner drag → new size (source px). Shift keeps the aspect ratio. */
+    onFxOverlayResize?: ((index: number, w: number, h: number) => void) | null;
     fxImageResolver?: ((path: string) => Promise<string | null>) | null;
   } = $props();
 
@@ -183,6 +186,9 @@
   let fxDrag: { x0: number; y0: number; x1: number; y1: number } | null = null;
   /** Overlay move in progress: grab offset from the overlay's top-left (logical px). */
   let ovDrag: { idx: number; gx: number; gy: number; x: number; y: number } | null = null;
+  /** Overlay resize in progress (bottom-right handle). */
+  let ovResize: { idx: number; x0: number; y0: number; w: number; h: number; aspect: number } | null = null;
+  const HANDLE = 14;   // canvas px
   $effect(() => { fxSim.imageResolver = fxImageResolver; });
 
   function fxReload(sx: number, sy: number) {
@@ -204,6 +210,13 @@
     // Overlay drag takes priority when the pointer is inside the selected overlay.
     if (fxOverlaySelected >= 0) {
       const r = fxSim.overlayRect(fxOverlaySelected);
+      const hs = HANDLE / geom.fit;   // handle size in logical px
+      if (r && Math.abs(p.x - (r.x + r.w)) <= hs && Math.abs(p.y - (r.y + r.h)) <= hs) {
+        ovResize = { idx: fxOverlaySelected, x0: r.x, y0: r.y, w: r.w, h: r.h, aspect: r.w / Math.max(1, r.h) };
+        (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+        e.preventDefault();
+        return;
+      }
       if (r && p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) {
         ovDrag = { idx: fxOverlaySelected, gx: p.x - r.x, gy: p.y - r.y, x: r.x, y: r.y };
         (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -218,6 +231,13 @@
   }
   function fxPointerMove(e: PointerEvent) {
     const p = toLogical(e); if (!p) return;
+    if (ovResize) {
+      let w = Math.max(4, p.x - ovResize.x0), h = Math.max(4, p.y - ovResize.y0);
+      if (e.shiftKey) h = w / ovResize.aspect;
+      ovResize.w = w; ovResize.h = h;
+      fxSim.setOverlaySize(ovResize.idx, w, h);   // live follow, no reload
+      return;
+    }
     if (ovDrag) {
       ovDrag.x = p.x - ovDrag.gx; ovDrag.y = p.y - ovDrag.gy;
       fxSim.setOverlayPos(ovDrag.idx, ovDrag.x, ovDrag.y);   // live follow, no reload
@@ -227,6 +247,11 @@
     fxDrag.x1 = p.x; fxDrag.y1 = p.y;
   }
   function fxPointerUp(e: PointerEvent) {
+    if (ovResize) {
+      const d = ovResize; ovResize = null;
+      onFxOverlayResize?.(d.idx, Math.round(d.w / geom.sx), Math.round(d.h / geom.sy));
+      return;
+    }
     if (ovDrag) {
       const d = ovDrag; ovDrag = null;
       // logical → source px; the doc update reloads the sim at the new rect
@@ -254,6 +279,10 @@
         ctx.lineWidth = 2 / geom.fit; ctx.setLineDash([6 / geom.fit, 4 / geom.fit]);
         ctx.strokeStyle = "rgba(56,189,248,0.9)";   // sky — overlays; amber = particle areas
         ctx.strokeRect(r.x, r.y, r.w, r.h);
+        // resize handle (bottom-right)
+        const hs = HANDLE / geom.fit;
+        ctx.setLineDash([]); ctx.fillStyle = "rgba(56,189,248,0.9)";
+        ctx.fillRect(r.x + r.w - hs / 2, r.y + r.h - hs / 2, hs, hs);
         ctx.restore();
       }
     }
