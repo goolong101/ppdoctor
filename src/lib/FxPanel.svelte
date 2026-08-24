@@ -4,14 +4,15 @@
   // untouched stay absent so the preset default applies on the Pi. Every
   // control shows the effective value (preset default when unset).
   import { FX_PRESETS, PRESET_LABELS, SPRITE_NAMES, resolveEmitter, presetDefaults, fxBudget, FX_PARTICLE_CAP,
-           OVERLAY_LIBRARY, type FxOverlayAsset,
-           type FxDoc, type FxEmitterJson, type FxOverlayJson } from "./fx";
+           OVERLAY_LIBRARY, sortedPresets, type FxOverlayAsset,
+           type FxDoc, type FxEmitterJson, type FxOverlayJson, type FxGlowJson } from "./fx";
 
   let {
-    doc = $bindable<FxDoc>({ particles: [], overlays: [] }),
+    doc = $bindable<FxDoc>({ particles: [], overlays: [], glows: [] }),
     selected = $bindable(-1),
     editArea = $bindable(false),
     overlaySelected = $bindable(-1),
+    glowSelected = $bindable(-1),
     onTest = null,
     liveStats = null,
     onAddOverlayAsset = null,
@@ -21,6 +22,8 @@
     editArea?: boolean;
     /** Selected overlay index (outlined + draggable on the preview). */
     overlaySelected?: number;
+    /** Selected glow spot index (draggable on the preview). */
+    glowSelected?: number;
     /** Fire a MSG_* into the preview (triggered emitters/overlays). */
     onTest?: ((key: string) => void) | null;
     liveStats?: (() => { live: number; emitters: number; overlays: number }) | null;
@@ -39,7 +42,7 @@
   ];
 
   let addPreset = $state<string>("starfield");
-  let section = $state<"particles" | "overlays">("particles");
+  let section = $state<"particles" | "overlays" | "glows">("particles");
   let live = $state({ live: 0, emitters: 0, overlays: 0 });
   $effect(() => {
     const id = setInterval(() => { if (liveStats) live = liveStats(); }, 500);
@@ -163,6 +166,22 @@
   }
   function resetColors() { if (cur) delete cur.color; }
 
+  // ── glow spots (virtual_lights)
+  let gSel = $derived(glowSelected);
+  let gcur = $derived(gSel >= 0 && gSel < doc.glows.length ? doc.glows[gSel] : null);
+  function nextGlowRomId(): number {
+    let id = 200;
+    const used = new Set(doc.glows.map(g => g.rom_id));
+    while (used.has(id)) id++;
+    return id;
+  }
+  function addGlow() {
+    doc.glows.push({ rom_id: nextGlowRomId(), name: `glow ${doc.glows.length + 1}`, x: 960, y: 540, radius: 40, color: [255, 200, 80] });
+    glowSelected = doc.glows.length - 1;
+  }
+  function removeGlow(i: number) { doc.glows.splice(i, 1); if (glowSelected >= doc.glows.length) glowSelected = doc.glows.length - 1; }
+  function glowHex(g: FxGlowJson): string { return hex(g.color); }
+
   // ── overlays
   let addOverlaySel = $state<string>(OVERLAY_LIBRARY[0]?.id ?? "blank");
   let addOverlayBusy = $state(false);
@@ -223,13 +242,15 @@
       class="flex-1 px-2 py-1 rounded border {section === 'particles' ? 'bg-amber-400/15 text-amber-200 border-amber-400/40' : 'bg-white/5 text-zinc-400 border-white/10 hover:bg-white/10'}">Particles ({doc.particles.length})</button>
     <button type="button" onclick={() => section = "overlays"}
       class="flex-1 px-2 py-1 rounded border {section === 'overlays' ? 'bg-amber-400/15 text-amber-200 border-amber-400/40' : 'bg-white/5 text-zinc-400 border-white/10 hover:bg-white/10'}">Overlays ({doc.overlays.length})</button>
+    <button type="button" onclick={() => section = "glows"}
+      class="flex-1 px-2 py-1 rounded border {section === 'glows' ? 'bg-amber-400/15 text-amber-200 border-amber-400/40' : 'bg-white/5 text-zinc-400 border-white/10 hover:bg-white/10'}">Glows ({doc.glows.length})</button>
   </div>
 
   {#if section === "particles"}
     <!-- add -->
     <div class="flex gap-1">
       <select bind:value={addPreset} class="flex-1 text-xs bg-black/30 border border-white/10 rounded px-2 py-1 text-zinc-200">
-        {#each FX_PRESETS as p}<option value={p}>{PRESET_LABELS[p] ?? p}</option>{/each}
+        {#each sortedPresets() as p}<option value={p}>{PRESET_LABELS[p] ?? p}</option>{/each}
       </select>
       <button type="button" onclick={addEmitter}
         class="text-[11px] px-2 py-1 rounded bg-amber-400/15 text-amber-200 border border-amber-400/40 hover:bg-amber-400/25">+ Add</button>
@@ -280,7 +301,7 @@
                  class="flex-1 text-xs bg-black/30 border border-white/10 rounded px-2 py-1 text-zinc-200" />
           <select value={cur.preset ?? ""} onchange={(e) => changePreset((e.currentTarget as HTMLSelectElement).value)}
                   class="text-xs bg-black/30 border border-white/10 rounded px-1 py-1 text-zinc-200 w-24">
-            {#each FX_PRESETS as p}<option value={p}>{p}</option>{/each}
+            {#each sortedPresets() as p}<option value={p}>{p}</option>{/each}
           </select>
         </div>
 
@@ -464,6 +485,49 @@
       </div>
     {/if}
 
+  {:else if section === "glows"}
+    <!-- glow spots = renderer virtual_lights: pulsing radial glows, no wand needed -->
+    <button type="button" onclick={addGlow}
+      class="text-[11px] px-2 py-1 rounded bg-amber-400/15 text-amber-200 border border-amber-400/40 hover:bg-amber-400/25">+ Add glow spot</button>
+    {#if doc.glows.length === 0}
+      <div class="text-[10px] text-zinc-500 leading-snug">Pulsing radial glows you can place anywhere — they breathe with the attract pulse and can be targeted by events via their id (200+). Drag the selected spot on the preview to position it.</div>
+    {:else}
+      <ul class="flex flex-col gap-0.5">
+        {#each doc.glows as g, i}
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+          <li class="flex items-center gap-1 text-[11px] rounded px-1.5 py-1 cursor-pointer {i === gSel ? 'bg-amber-400/15 text-amber-100' : 'hover:bg-white/5 text-zinc-300'}"
+              onclick={() => glowSelected = i}>
+            <span class="w-3 h-3 rounded-full flex-shrink-0" style="background: {glowHex(g)}"></span>
+            <span class="flex-1 truncate">{g.name ?? `glow ${i}`} <span class="text-zinc-500">· id {g.rom_id}</span></span>
+            <button type="button" class="text-zinc-500 hover:text-red-300 px-0.5" title="remove" onclick={(e) => { e.stopPropagation(); removeGlow(i); }}>✕</button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+    {#if gcur}
+      <div class="border-t border-white/5 pt-3 flex flex-col gap-2">
+        <input type="text" value={gcur.name ?? ""} placeholder="name" oninput={(e) => { gcur!.name = (e.currentTarget as HTMLInputElement).value; }}
+               class="text-xs bg-black/30 border border-white/10 rounded px-2 py-1 text-zinc-200" />
+        <div class="grid grid-cols-3 gap-1">
+          <label class="text-[9px] text-zinc-500">x
+            <input type="number" value={gcur.x} oninput={(e) => { const v = +(e.currentTarget as HTMLInputElement).value; if (!Number.isNaN(v)) gcur!.x = Math.round(v); }}
+                   class="w-full text-[11px] bg-black/30 border border-white/10 rounded px-1 py-0.5 text-zinc-200 font-mono" /></label>
+          <label class="text-[9px] text-zinc-500">y
+            <input type="number" value={gcur.y} oninput={(e) => { const v = +(e.currentTarget as HTMLInputElement).value; if (!Number.isNaN(v)) gcur!.y = Math.round(v); }}
+                   class="w-full text-[11px] bg-black/30 border border-white/10 rounded px-1 py-0.5 text-zinc-200 font-mono" /></label>
+          <label class="text-[9px] text-zinc-500">radius
+            <input type="number" min="4" max="400" value={gcur.radius} oninput={(e) => { const v = +(e.currentTarget as HTMLInputElement).value; if (!Number.isNaN(v)) gcur!.radius = Math.max(4, Math.round(v)); }}
+                   class="w-full text-[11px] bg-black/30 border border-white/10 rounded px-1 py-0.5 text-zinc-200 font-mono" /></label>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] text-zinc-400">Color</span>
+          <input type="color" value={glowHex(gcur)} oninput={(e) => { gcur!.color = fromHex((e.currentTarget as HTMLInputElement).value); }}
+                 class="w-10 h-6 bg-transparent border border-white/10 rounded cursor-pointer" />
+          <span class="text-[9px] text-zinc-600">Drag the spot on the preview to move it.</span>
+        </div>
+        <div class="text-[9px] text-zinc-600 leading-snug">Pulses with the attract engine on the cabinet. Also usable in event lamp lists by id {gcur.rom_id}.</div>
+      </div>
+    {/if}
   {:else}
     <!-- overlays -->
     <div class="flex gap-1">

@@ -34,6 +34,8 @@
     fxOverlaySelected = -1,
     onFxOverlayMove = null,
     onFxOverlayResize = null,
+    fxGlowSelected = -1,
+    onFxGlowMove = null,
     fxImageResolver = null,
   }: {
     xml?: string;
@@ -65,6 +67,9 @@
     onFxOverlayMove?: ((index: number, x: number, y: number) => void) | null;
     /** Bottom-right corner drag → new size (source px). Shift keeps the aspect ratio. */
     onFxOverlayResize?: ((index: number, w: number, h: number) => void) | null;
+    /** Selected glow spot (drag to move; reported in source px). */
+    fxGlowSelected?: number;
+    onFxGlowMove?: ((index: number, x: number, y: number) => void) | null;
     fxImageResolver?: ((path: string) => Promise<string | null>) | null;
   } = $props();
 
@@ -189,6 +194,8 @@
   let fxDrag: { x0: number; y0: number; x1: number; y1: number } | null = null;
   /** Overlay move in progress: grab offset from the overlay's top-left (logical px). */
   let ovDrag: { idx: number; gx: number; gy: number; x: number; y: number } | null = null;
+  /** Glow-spot drag in progress. */
+  let glowDrag: { idx: number; x: number; y: number } | null = null;
   /** Trapezoid corner drag in progress: which corner, current quad (logical px). */
   let quadDrag: { idx: number; corner: number; q: { x: number; y: number }[] } | null = null;
   /** Overlay resize in progress (bottom-right handle). */
@@ -212,6 +219,16 @@
   }
   function fxPointerDown(e: PointerEvent) {
     const p = toLogical(e); if (!p) return;
+    // Glow spot drag (selected in the Glows section).
+    if (fxGlowSelected >= 0) {
+      const g = fxSim.glowCenter(fxGlowSelected);
+      if (g && Math.abs(p.x - g.x) <= Math.max(24, g.rx) && Math.abs(p.y - g.y) <= Math.max(24, g.ry)) {
+        glowDrag = { idx: fxGlowSelected, x: g.x, y: g.y };
+        (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+        e.preventDefault();
+        return;
+      }
+    }
     // Trapezoid corner handles of the selected emitter (always active when it has a quad).
     if (fxSelected >= 0) {
       const q = fxSim.emitterQuad(fxSelected);
@@ -251,6 +268,7 @@
   }
   function fxPointerMove(e: PointerEvent) {
     const p = toLogical(e); if (!p) return;
+    if (glowDrag) { glowDrag.x = p.x; glowDrag.y = p.y; fxSim.setGlowPos(glowDrag.idx, p.x, p.y); return; }
     if (quadDrag) { quadDrag.q[quadDrag.corner] = { x: p.x, y: p.y }; return; }
     if (ovResize) {
       let w = Math.max(4, p.x - ovResize.x0), h = Math.max(4, p.y - ovResize.y0);
@@ -268,6 +286,11 @@
     fxDrag.x1 = p.x; fxDrag.y1 = p.y;
   }
   function fxPointerUp(e: PointerEvent) {
+    if (glowDrag) {
+      const d = glowDrag; glowDrag = null;
+      onFxGlowMove?.(d.idx, Math.round(d.x / geom.sx), Math.round(d.y / geom.sy));
+      return;
+    }
     if (quadDrag) {
       const d = quadDrag; quadDrag = null;
       onFxQuad?.(d.idx, d.q.map(c => [Math.round(c.x / geom.sx), Math.round(c.y / geom.sy)] as [number, number]));
@@ -298,6 +321,16 @@
   /** Dashed outline of the selected emitter's area (or its point), plus the
    *  in-progress drag rectangle. Drawn in logical space. */
   function drawFxOutline(ctx: CanvasRenderingContext2D) {
+    if (fxGlowSelected >= 0) {
+      const g = fxSim.glowCenter(fxGlowSelected);
+      if (g) {
+        ctx.save();
+        ctx.lineWidth = 2 / geom.fit; ctx.setLineDash([5 / geom.fit, 4 / geom.fit]);
+        ctx.strokeStyle = "rgba(251,191,36,0.9)";
+        ctx.beginPath(); ctx.ellipse(g.x, g.y, g.rx, g.ry, 0, 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+      }
+    }
     if (fxOverlaySelected >= 0) {
       const r = fxSim.overlayRect(fxOverlaySelected);
       if (r) {

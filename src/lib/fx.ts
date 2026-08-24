@@ -80,15 +80,18 @@ export interface FxOverlayJson {
   pulse?: { period_ms?: number; depth?: number };
   warp?: { type?: "wave" | "flag" | "bulge" | "jelly"; amp?: number; period_ms?: number; freq?: number };
   mesh?: number;
-  /** Sprite-sheet animation: image holds cols×rows frames, `count` used, looped at fps. */
-  frames?: { cols?: number; rows?: number; count?: number; fps?: number };
+  /** Sprite-sheet animation: image holds cols×rows frames, `count` used, looped at fps.
+   *  `random: true` = one random frame per show/strike (lightning designs). */
+  frames?: { cols?: number; rows?: number; count?: number; fps?: number; random?: boolean };
   trigger?: string | string[];
   duration_ms?: number;
   fade_ms?: number;
   delay_ms?: number;
 }
 
-export interface FxDoc { particles: FxEmitterJson[]; overlays: FxOverlayJson[]; }
+/** Glow spot = the renderer's virtual_lights entry (pulsing radial glow lamp). */
+export interface FxGlowJson { rom_id: number; name?: string; x: number; y: number; radius: number; color: [number, number, number]; }
+export interface FxDoc { particles: FxEmitterJson[]; overlays: FxOverlayJson[]; glows: FxGlowJson[]; }
 
 export const FX_PRESETS = [
   "starfield", "rain", "snow", "smoke", "fire", "flames", "embers", "sparkles", "fireflies", "meteors", "laser", "bubbles",
@@ -300,6 +303,7 @@ interface Overlay {
   pulsePeriod: number; pulseDepth: number;
   warp: number; warpAmp: number; warpPeriod: number; warpFreq: number; cols: number; rows: number;
   frameCols: number; frameRows: number; frameCount: number; frameFps: number; framePhase: number;
+  frameRandom: boolean; curFrame: number;
   idle: boolean; triggers: string[]; durationMs: number; fadeMs: number; delayMs: number;
   pendingAt: number;
   activeUntil: number; activeSince: number; offX: number; offY: number; lastMs: number;
@@ -387,6 +391,7 @@ function alphaCurve(curve: number, t: number): number {
 export class FxSim {
   private emitters: Emitter[] = [];
   private overlays: Overlay[] = [];
+  private glows: { x: number; y: number; rx: number; ry: number; color: [number, number, number]; tex: HTMLCanvasElement | null }[] = [];
   private sprites: HTMLCanvasElement[] = [];
   private tinted = new Map<string, HTMLCanvasElement>();
   private W = 1920; private H = 1080;
@@ -404,6 +409,34 @@ export class FxSim {
   emitterArea(i: number) { return this.emitters[i]?.area ?? null; }
   /** Screen-space trapezoid of emitter i (null if it uses a plain area). */
   emitterQuad(i: number) { return this.emitters[i]?.quad ?? null; }
+  /** Screen-space center of glow spot i (for the editor). */
+  glowCenter(i: number) { const g = this.glows[i]; return g ? { x: g.x, y: g.y, rx: g.rx, ry: g.ry } : null; }
+  setGlowPos(i: number, x: number, y: number) { const g = this.glows[i]; if (g) { g.x = x; g.y = y; } }
+
+  private drawGlows(ctx: CanvasRenderingContext2D, now: number) {
+    if (!this.glows.length) return;
+    // Approximates the Pi: virtual lights join the lamp layer and breathe with
+    // the attract pulse (defaults 230–255 over 3 s).
+    const pulse = (230 + (0.5 + 0.5 * Math.sin(now / 1000 * 2 * PI / 3)) * 25) / 255;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (const g of this.glows) {
+      if (!g.tex) {
+        const N = 96, cv = document.createElement("canvas"); cv.width = N; cv.height = N;
+        const c2 = cv.getContext("2d")!;
+        const grad = c2.createRadialGradient(N / 2, N / 2, 0, N / 2, N / 2, N / 2);
+        grad.addColorStop(0, `rgba(${g.color[0]},${g.color[1]},${g.color[2]},1)`);
+        grad.addColorStop(0.5, `rgba(${g.color[0]},${g.color[1]},${g.color[2]},0.35)`);
+        grad.addColorStop(1, `rgba(${g.color[0]},${g.color[1]},${g.color[2]},0)`);
+        c2.fillStyle = grad; c2.fillRect(0, 0, N, N);
+        g.tex = cv;
+      }
+      ctx.globalAlpha = pulse;
+      ctx.drawImage(g.tex, g.x - g.rx, g.y - g.ry, g.rx * 2, g.ry * 2);
+    }
+    ctx.restore();
+  }
+
   /** Screen-space rect of overlay i (with drift offset) for the editor. */
   overlayRect(i: number) { const o = this.overlays[i]; return o && o.img ? { x: o.dst.x + o.offX, y: o.dst.y + o.offY, w: o.dst.w, h: o.dst.h } : null; }
   /** Move overlay i (screen px) without reloading its texture. */
@@ -413,7 +446,11 @@ export class FxSim {
   emitterPoint(i: number) { const e = this.emitters[i]; return e && e.r.spawnMode === 5 ? { x: e.px, y: e.py } : null; }
 
   load(doc: FxDoc | null, sx: number, sy: number, W = 1920, H = 1080) {
-    this.emitters = []; this.overlays = [];
+    this.emitters = []; this.overlays = []; this.glows = [];
+    for (const g of (doc?.glows ?? []).slice(0, 20)) {
+      if (!g || typeof g.x !== "number") continue;
+      this.glows.push({ x: g.x * sx, y: g.y * sy, rx: Math.max(2, (g.radius ?? 20) * sx), ry: Math.max(2, (g.radius ?? 20) * sy), color: (g.color ?? [255, 255, 255]) as [number, number, number], tex: null });
+    }
     this.sx = sx; this.sy = sy; this.W = W; this.H = H;
     if (!doc) return;
     const s = (sx + sy) * 0.5;
@@ -469,6 +506,7 @@ export class FxSim {
         cols: 1, rows: 1,
         frameCols: Math.max(1, Math.trunc(j.frames?.cols ?? 1)), frameRows: Math.max(1, Math.trunc(j.frames?.rows ?? 1)),
         frameCount: 1, frameFps: Math.max(0, j.frames?.fps ?? 12), framePhase: 0,
+        frameRandom: !!j.frames?.random, curFrame: 0,
         idle: true, triggers: [], durationMs: Math.max(0, Math.trunc(j.duration_ms ?? 0)),
         fadeMs: Math.max(0, Math.trunc(j.fade_ms ?? 300)),
         delayMs: Math.max(0, Math.trunc(j.delay_ms ?? 0)), pendingAt: 0,
@@ -539,6 +577,7 @@ export class FxSim {
     for (const o of this.overlays) {
       if (!o.triggers.includes(key)) continue;
       if (o.delayMs > 0) { o.pendingAt = now + o.delayMs; continue; }
+      if (o.frameRandom && o.frameCount > 1) o.curFrame = Math.trunc(frand() * o.frameCount) % o.frameCount;
       o.activeSince = now; o.activeUntil = now + (o.durationMs > 0 ? o.durationMs : 2000);
     }
   }
@@ -673,7 +712,9 @@ export class FxSim {
     const dt = clamp((now - o.lastMs) / 1000, 0, 0.05);
     o.lastMs = now;
     if (o.pendingAt !== 0 && now >= o.pendingAt) {
-      o.pendingAt = 0; o.activeSince = now; o.activeUntil = now + (o.durationMs > 0 ? o.durationMs : 2000);
+      o.pendingAt = 0;
+      if (o.frameRandom && o.frameCount > 1) o.curFrame = Math.trunc(frand() * o.frameCount) % o.frameCount;
+      o.activeSince = now; o.activeUntil = now + (o.durationMs > 0 ? o.durationMs : 2000);
     }
     let vis = 1;
     if (!o.idle) {
@@ -705,7 +746,8 @@ export class FxSim {
     ctx.globalAlpha = clamp(alpha, 0, 1);
     const cols = o.cols, rows = o.rows;
     // current sprite-sheet frame → source sub-rect
-    const fi = (o.frameCount > 1 && o.frameFps > 0) ? (Math.trunc(tsec * o.frameFps) + o.framePhase) % o.frameCount : 0;
+    const fi = o.frameRandom ? (o.curFrame % Math.max(1, o.frameCount))
+      : (o.frameCount > 1 && o.frameFps > 0) ? (Math.trunc(tsec * o.frameFps) + o.framePhase) % o.frameCount : 0;
     const iw = o.img.naturalWidth / o.frameCols, ih = o.img.naturalHeight / o.frameRows;
     const fox = (fi % o.frameCols) * iw, foy = Math.trunc(fi / o.frameCols) * ih;
     // vertex grid (same displacement math as the Pi's mesh)
@@ -766,9 +808,10 @@ export class FxSim {
   /** Update + draw everything in `slot`. ctx must already carry the
    *  logical→canvas transform (1920×1080 space). */
   draw(ctx: CanvasRenderingContext2D, slot: FxSlot, now: number) {
-    if (!this.emitters.length && !this.overlays.length) return;
+    if (!this.emitters.length && !this.overlays.length && !this.glows.length) return;
     const T = ctx.getTransform();
     this.baseT = { a: T.a, b: T.b, c: T.c, d: T.d, e: T.e, f: T.f };
+    if (slot === 1) this.drawGlows(ctx, now);   // Pi puts virtual lights on the lamp layer
     for (const o of this.overlays) if (o.slot === slot) this.drawOverlay(ctx, o, now);
     let live = 0;
     for (const e of this.emitters) {
@@ -793,6 +836,7 @@ export function fxDocFromEventMap(em: any): FxDoc {
   return {
     particles: Array.isArray(em?.particles) ? em.particles.filter((e: any) => e && typeof e === "object") : [],
     overlays:  Array.isArray(em?.overlays)  ? em.overlays.filter((e: any) => e && typeof e === "object")  : [],
+    glows:     Array.isArray(em?.virtual_lights) ? em.virtual_lights.filter((e: any) => e && typeof e === "object") : [],
   };
 }
 
@@ -800,6 +844,7 @@ export function fxDocFromEventMap(em: any): FxDoc {
 export function fxDocIntoEventMap(em: any, doc: FxDoc): void {
   if (doc.particles.length) em.particles = doc.particles; else delete em.particles;
   if (doc.overlays.length)  em.overlays  = doc.overlays;  else delete em.overlays;
+  if (doc.glows?.length)    em.virtual_lights = doc.glows; else delete em.virtual_lights;
 }
 
 /** Particle budget check for the panel: which emitters survive the renderer's
@@ -832,7 +877,19 @@ export const OVERLAY_LIBRARY: FxOverlayAsset[] = [
   { id: "fire", label: "Fire (real flames)", file: "fx/fire_sheet.png", staticUrl: "/fx/fire_sheet.png",
     frameW: 256, frameH: 272,
     json: { frames: { cols: 6, rows: 5, count: 30, fps: 15 }, blend: "add", alpha: 0.95, pivot: [0.5, 1.0] } },
+  { id: "smoke", label: "Smoke plume (real)", file: "fx/smoke_sheet.png", staticUrl: "/fx/smoke_sheet.png",
+    frameW: 150, frameH: 375,
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 12 }, blend: "add", alpha: 0.8, pivot: [0.5, 1.0] } },
+  { id: "lightning", label: "Lightning strike (5 designs)", file: "fx/lightning_sheet.png", staticUrl: "/fx/lightning_sheet.png",
+    frameW: 300, frameH: 800,
+    json: { frames: { cols: 5, rows: 1, count: 5, fps: 0, random: true }, blend: "add", alpha: 1.0,
+            trigger: "MSG_JACKPOT", duration_ms: 180, fade_ms: 60 } },
 ];
+
+/** Preset ids sorted by display label for the panel dropdown. */
+export function sortedPresets(): string[] {
+  return [...FX_PRESETS].sort((a, b) => (PRESET_LABELS[a] ?? a).localeCompare(PRESET_LABELS[b] ?? b));
+}
 
 /** Human labels for the panel. */
 export const PRESET_LABELS: Record<string, string> = {

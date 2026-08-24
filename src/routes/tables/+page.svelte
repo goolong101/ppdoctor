@@ -6,6 +6,7 @@
   import { onMount } from "svelte";
   import B2SCanvas from "$lib/B2SCanvas.svelte";
   import FxPanel from "$lib/FxPanel.svelte";
+  import FxVideoPreview from "$lib/FxVideoPreview.svelte";
   import { fxDocFromEventMap, fxDocIntoEventMap, type FxDoc } from "$lib/fx";
   import Logo from "$lib/Logo.svelte";
   import { bulbAlpha as b2sBulbAlpha, type AttractSpec as B2SAttractSpec, type B2SBulb } from "$lib/b2s";
@@ -1909,11 +1910,13 @@
   // arrays, edited in place and previewed live by B2SCanvas with the same
   // engine the Pi runs (fx.ts ↔ b2s_fx.cpp). fxSavedJson = last saved
   // snapshot for dirty detection / revert.
-  let fxCurrent   = $state<FxDoc>({ particles: [], overlays: [] });
+  let fxCurrent   = $state<FxDoc>({ particles: [], overlays: [], glows: [] });
   let fxSavedJson = $state("");
   let fxSelected  = $state(-1);
   let fxEditArea  = $state(false);
   let fxOverlaySel = $state(-1);
+  let fxGlowSel = $state(-1);
+  let fxVideoRef = $state<ReturnType<typeof FxVideoPreview> | null>(null);
   let fxDirty     = $derived(JSON.stringify(fxCurrent) !== fxSavedJson);
   let b2sPanelTab = $state<"lamps" | "layers">("lamps");
   let b2sCanvasRef = $state<ReturnType<typeof B2SCanvas> | null>(null);
@@ -2021,14 +2024,25 @@
     b2sCurrent = { ...s.value };
     b2sSaved   = { ...s.value };
     b2sSavedAt = s.savedAt || null;
-    // FX layers come straight from the event_map (no localStorage — the
-    // file is the single source of truth the cabinet reads).
-    const doc = fxDocFromEventMap(em);
-    fxCurrent   = doc;
-    fxSavedJson = JSON.stringify(doc);
-    fxSelected  = doc.particles.length ? 0 : -1;
-    fxOverlaySel = doc.overlays.length ? 0 : -1;
-    fxEditArea  = false;
+    // FX layers ALWAYS come from default_image/b2s_event_map.json — the file
+    // the cabinet reads for effects regardless of what the table displays
+    // (b2s, video, or plain image). b2sEventMapJson may be a video sidecar,
+    // so fetch the image map explicitly.
+    (async () => {
+      let em2: any = em;
+      try {
+        const { cacheGetBase64 } = await import("$lib/api");
+        const b64 = await cacheGetBase64(sshHost(), selected!.folder, "default_image", "b2s_event_map.json", cacheDir());
+        if (b64) em2 = JSON.parse(atob(b64));
+      } catch { /* fall back to em */ }
+      const doc = fxDocFromEventMap(em2);
+      fxCurrent   = doc;
+      fxSavedJson = JSON.stringify(doc);
+      fxSelected  = doc.particles.length ? 0 : -1;
+      fxOverlaySel = doc.overlays.length ? 0 : -1;
+      fxGlowSel = doc.glows.length ? 0 : -1;
+      fxEditArea  = false;
+    })();
   });
 
   let b2sSettingsDirty = $derived(
@@ -2048,6 +2062,22 @@
    *  3. Mark the file dirty in the DB and trigger a push to the Pi.
    *  baseBrightness is preview-only (no Pi equivalent) and never written
    *  to event_map. */
+  /** Persist particles/overlays/glows into default_image/b2s_event_map.json
+   *  (read-modify-write) and mark it dirty — used by every save path so FX
+   *  work on video/image tables that have no b2s save target. */
+  async function saveFxToImageMap(id: number, folder: string): Promise<void> {
+    const { cacheGetBase64, cacheWriteText, dbMarkDirty } = await import("$lib/api");
+    let em2: any = {};
+    try {
+      const b64 = await cacheGetBase64(sshHost(), folder, "default_image", "b2s_event_map.json", cacheDir());
+      if (b64) em2 = JSON.parse(atob(b64));
+    } catch { em2 = {}; }
+    fxDocIntoEventMap(em2, fxCurrent);
+    await cacheWriteText(sshHost(), folder, "default_image", "b2s_event_map.json", JSON.stringify(em2, null, 2), cacheDir());
+    await dbMarkDirty(id, "default_image", "b2s_event_map.json");
+    fxSavedJson = JSON.stringify(fxCurrent);
+  }
+
   async function saveB2SSettings() {
     const id = selected?.id;
     const folder = selected?.folder;
@@ -2095,13 +2125,15 @@
           targetSlot = "default_video";
           targetFile = `${videoStem}_event_map.json`;
         } else {
-          log("[b2s/save]", `aborting: video '${activeFile}' has no paired .directb2s — generate one first`);
+          await saveFxToImageMap(id, folder);   // FX still save (they live in the image map)
+          log("[b2s/save]", `aborting: video '${activeFile}' has no paired .directb2s — generate one first (FX saved)`);
           // Surface to user; uses the existing dropError toast lane.
           dropError = `Can't save B2S settings: ${activeFile} has no paired .directb2s. Use "Edit B2S" first to author lamps + Save.`;
           return;
         }
       } else {
-        log("[b2s/save]", `aborting: activeFile=${activeFile} has no b2s target`);
+        await saveFxToImageMap(id, folder);     // FX still save (they live in the image map)
+        log("[b2s/save]", `aborting: activeFile=${activeFile} has no b2s target (FX saved)`);
         return;
       }
       // Start from whatever the mirror currently holds (preserves keys we
@@ -2144,9 +2176,14 @@
         em.attract_cycle_seconds = b2sCurrent.attractCycleSeconds;
       }
 
-      // FX layers (particles/overlays) — written alongside; empty arrays
-      // drop the keys so untouched tables stay byte-identical.
-      fxDocIntoEventMap(em, fxCurrent);
+      // FX layers (particles/overlays/glows) ALWAYS live in the
+      // default_image map — even when the attract settings above target a
+      // video sidecar. Read-modify-write that file separately.
+      if (targetSlot === "default_image" && targetFile === "b2s_event_map.json") {
+        fxDocIntoEventMap(em, fxCurrent);
+      } else {
+        await saveFxToImageMap(id, folder);
+      }
       const json = JSON.stringify(em, null, 2);
       await cacheWriteText(sshHost(), folder, targetSlot, targetFile, json, cacheDir());
       fxSavedJson = JSON.stringify(fxCurrent);
@@ -2170,7 +2207,7 @@
   }
   function revertB2SSettings() {
     b2sCurrent = { ...b2sSaved };
-    try { fxCurrent = fxSavedJson ? JSON.parse(fxSavedJson) : { particles: [], overlays: [] }; } catch { /* keep */ }
+    try { fxCurrent = fxSavedJson ? JSON.parse(fxSavedJson) : { particles: [], overlays: [], glows: [] }; } catch { /* keep */ }
     fxSelected = fxCurrent.particles.length ? Math.min(fxSelected, fxCurrent.particles.length - 1) : -1;
     fxEditArea = false;
   }
@@ -4357,6 +4394,9 @@
                         controls loop autoplay muted
                         class="w-full h-full"
                       ></video>
+                      <!-- FX preview over the video — same engine as the Pi's
+                           loadFxFromImageMap (authoring space = 1920×1080). -->
+                      <FxVideoPreview bind:this={fxVideoRef} fxDoc={fxCurrent} fxImageResolver={fxResolveImage} />
 
                       <!-- B2S editor overlay (snippet rendered identically in
                            the B2S preview branch below — so VPU downloads,
@@ -4400,6 +4440,8 @@
                         onFxArea={(i, area) => { if (fxCurrent.particles[i]) { fxCurrent.particles[i].area = area; } fxEditArea = false; }}
                         onFxQuad={(i, quad) => { const p = fxCurrent.particles[i]; if (p) { p.quad = quad as any; delete p.area; } }}
                         fxOverlaySelected={b2sPanelTab === "layers" ? fxOverlaySel : -1}
+                        fxGlowSelected={b2sPanelTab === "layers" ? fxGlowSel : -1}
+                        onFxGlowMove={(i, x, y) => { const g = fxCurrent.glows[i]; if (g) { g.x = x; g.y = y; } }}
                         onFxOverlayMove={(i, x, y) => { const o = fxCurrent.overlays[i]; if (o) { const r = o.rect ?? [0, 0, 0, 0]; o.rect = [x, y, r[2], r[3]]; } }}
                         onFxOverlayResize={(i, w, h) => { const o = fxCurrent.overlays[i]; if (o) { const r = o.rect ?? [0, 0, 0, 0]; o.rect = [r[0], r[1], w, h]; } }}
                         fxImageResolver={fxResolveImage}
@@ -4474,7 +4516,7 @@
                       class="flex-1 px-2 py-1 rounded border {b2sPanelTab === 'layers' ? 'bg-sky-500/15 text-sky-200 border-sky-500/40' : 'bg-white/5 text-zinc-400 border-white/10 hover:bg-white/10'}">Layers{fxCurrent.particles.length + fxCurrent.overlays.length ? ` (${fxCurrent.particles.length + fxCurrent.overlays.length})` : ""}</button>
                   </div>
                   {#if b2sPanelTab === "layers"}
-                    <FxPanel bind:doc={fxCurrent} bind:selected={fxSelected} bind:editArea={fxEditArea} bind:overlaySelected={fxOverlaySel}
+                    <FxPanel bind:doc={fxCurrent} bind:selected={fxSelected} bind:editArea={fxEditArea} bind:overlaySelected={fxOverlaySel} bind:glowSelected={fxGlowSel}
                              onTest={(k) => b2sCanvasRef?.fxTrigger(k)}
                              onAddOverlayAsset={fxInstallOverlayAsset}
                              liveStats={() => b2sCanvasRef?.fxStats() ?? { live: 0, emitters: 0, overlays: 0 }} />
@@ -4637,6 +4679,31 @@
                   {/if}
                   </div>
                 {:else if activePanel === "image"}
+                  <div class="flex flex-col gap-2 flex-shrink-0 self-start">
+                  <div class="flex gap-1 text-[11px]">
+                    <button type="button" onclick={() => b2sPanelTab = "lamps"}
+                      class="flex-1 px-2 py-1 rounded border {b2sPanelTab === 'lamps' ? 'bg-sky-500/15 text-sky-200 border-sky-500/40' : 'bg-white/5 text-zinc-400 border-white/10 hover:bg-white/10'}">{showingVideo ? "Video" : "Image"}</button>
+                    <button type="button" onclick={() => b2sPanelTab = "layers"}
+                      class="flex-1 px-2 py-1 rounded border {b2sPanelTab === 'layers' ? 'bg-sky-500/15 text-sky-200 border-sky-500/40' : 'bg-white/5 text-zinc-400 border-white/10 hover:bg-white/10'}">Layers{fxCurrent.particles.length + fxCurrent.overlays.length + fxCurrent.glows.length ? ` (${fxCurrent.particles.length + fxCurrent.overlays.length + fxCurrent.glows.length})` : ""}</button>
+                  </div>
+                  {#if b2sPanelTab === "layers"}
+                    <FxPanel bind:doc={fxCurrent} bind:selected={fxSelected} bind:editArea={fxEditArea} bind:overlaySelected={fxOverlaySel} bind:glowSelected={fxGlowSel}
+                             onTest={(k) => fxVideoRef?.fxTrigger(k)}
+                             onAddOverlayAsset={fxInstallOverlayAsset}
+                             liveStats={() => fxVideoRef?.fxStats() ?? { live: 0, emitters: 0, overlays: 0 }} />
+                    <div class="glass rounded-xl p-3 w-72 flex flex-col gap-1.5">
+                      <div class="flex gap-2">
+                        <button type="button" onclick={saveB2SSettings} disabled={!b2sSettingsDirty}
+                          class="flex-1 text-[11px] px-2 py-1.5 rounded {b2sSettingsDirty ? 'bg-amber-400/15 text-amber-200 border border-amber-400/40 hover:bg-amber-400/25' : 'bg-white/5 text-zinc-600 border border-white/5 cursor-not-allowed'} transition-colors font-medium"
+                          title="Write layers into default_image/b2s_event_map.json and push to the cabinet">Save</button>
+                        <button type="button" onclick={revertB2SSettings} disabled={!b2sSettingsDirty}
+                          class="flex-1 text-[11px] px-2 py-1.5 rounded {b2sSettingsDirty ? 'bg-white/5 text-zinc-300 border border-white/10 hover:bg-white/10' : 'bg-white/5 text-zinc-600 border border-white/5 cursor-not-allowed'} transition-colors font-medium">Revert</button>
+                      </div>
+                      <div class="text-[9px] text-zinc-500 leading-snug">
+                        {#if b2sSettingsDirty}<span class="text-amber-400">●</span> unsaved changes{:else}Saved — effects draw over the video/image on the cabinet.{/if}
+                      </div>
+                    </div>
+                  {:else}
                   <aside class="glass rounded-xl p-4 w-64 flex-shrink-0 self-start flex flex-col gap-4">
                     <h3 class="text-xs uppercase tracking-wider text-zinc-400 font-medium">Image bloom adjustment</h3>
 
@@ -4792,6 +4859,8 @@
                       </div>
                     </div>
                   </aside>
+                  {/if}
+                  </div>
                 {/if}
               </div>
 
