@@ -295,7 +295,7 @@ interface Emitter {
   pool: Particle[]; spawnAcc: number; pendingAt: number; activeUntil: number; lastMs: number; clock: number;
 }
 interface Overlay {
-  j: FxOverlayJson; img: HTMLImageElement | null; dst: { x: number; y: number; w: number; h: number };
+  j: FxOverlayJson; img: CanvasImageSource | null; imgW: number; imgH: number; dst: { x: number; y: number; w: number; h: number };
   slot: FxSlot; blend: "add" | "blend"; alpha: number; pivotX: number; pivotY: number;
   breathePeriod: number; breatheSX: number; breatheSY: number; breatheAlpha: number;
   swayPeriod: number; swayDeg: number; angleDeg: number; spinDegS: number; bobPeriod: number; bobPx: number;
@@ -491,7 +491,7 @@ export class FxSim {
     for (const j of (doc.overlays ?? []).slice(0, MAX_OVERLAYS)) {
       if (!j || typeof j !== "object" || j.enabled === false || !j.image) continue;
       const o: Overlay = {
-        j, img: null, dst: { x: 0, y: 0, w: 0, h: 0 },
+        j, img: null, imgW: 0, imgH: 0, dst: { x: 0, y: 0, w: 0, h: 0 },
         slot: slotFromName(j.z, 1), blend: j.blend === "add" ? "add" : "blend", alpha: clamp(j.alpha ?? 1, 0, 1),
         pivotX: clamp(j.pivot?.[0] ?? 0.5, 0, 1), pivotY: clamp(j.pivot?.[1] ?? 0.5, 0, 1),
         breathePeriod: j.breathe ? (j.breathe.period_ms ?? 4000) : 0, breatheSX: j.breathe?.scale_x ?? 0,
@@ -539,6 +539,28 @@ export class FxSim {
       const rw = r && r[2] > 0 ? r[2] : img.naturalWidth / o.frameCols;    // one frame
       const rh = r && r[3] > 0 ? r[3] : img.naturalHeight / o.frameRows;
       o.dst = { x: rx * this.sx, y: ry * this.sy, w: rw * this.sx, h: rh * this.sy };
+      o.imgW = img.naturalWidth; o.imgH = img.naturalHeight;
+      if (o.blend === "add") {
+        // Preview-only luma key: the cabinet's SDL additive blend makes black
+        // pixels invisible over the video, but here the FX canvas floats over
+        // the <video> element, so opaque black would show as a black box.
+        // alpha' = alpha * max(r,g,b)/255 keeps real alpha (lightning) intact.
+        try {
+          const cv = document.createElement("canvas");
+          cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+          const c2 = cv.getContext("2d", { willReadFrequently: true })!;
+          c2.drawImage(img, 0, 0);
+          const d = c2.getImageData(0, 0, cv.width, cv.height);
+          const px = d.data;
+          for (let i = 0; i < px.length; i += 4) {
+            const m = Math.max(px[i], px[i + 1], px[i + 2]);
+            px[i + 3] = (px[i + 3] * m / 255) | 0;
+          }
+          c2.putImageData(d, 0, 0);
+          o.img = cv;
+          return;
+        } catch { /* fall back to the raw image */ }
+      }
       o.img = img;
     };
     img.src = url;
@@ -748,7 +770,7 @@ export class FxSim {
     // current sprite-sheet frame → source sub-rect
     const fi = o.frameRandom ? (o.curFrame % Math.max(1, o.frameCount))
       : (o.frameCount > 1 && o.frameFps > 0) ? (Math.trunc(tsec * o.frameFps) + o.framePhase) % o.frameCount : 0;
-    const iw = o.img.naturalWidth / o.frameCols, ih = o.img.naturalHeight / o.frameRows;
+    const iw = o.imgW / o.frameCols, ih = o.imgH / o.frameRows;
     const fox = (fi % o.frameCols) * iw, foy = Math.trunc(fi / o.frameCols) * ih;
     // vertex grid (same displacement math as the Pi's mesh)
     const vx: number[] = [], vy: number[] = [];
@@ -786,7 +808,7 @@ export class FxSim {
   }
 
   /** Affine-mapped textured triangle (standard canvas technique). */
-  private texTri(ctx: CanvasRenderingContext2D, img: HTMLImageElement,
+  private texTri(ctx: CanvasRenderingContext2D, img: CanvasImageSource,
     p0: [number, number], p1: [number, number], p2: [number, number],
     t0: [number, number], t1: [number, number], t2: [number, number]) {
     const x0 = p0[0], y0 = p0[1], x1 = p1[0], y1 = p1[1], x2 = p2[0], y2 = p2[1];
