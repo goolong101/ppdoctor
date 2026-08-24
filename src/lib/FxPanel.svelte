@@ -185,6 +185,19 @@
     } finally { addOverlayBusy = false; }
   }
   function removeOverlay(i: number) { doc.overlays.splice(i, 1); if (overlaySelected >= doc.overlays.length) overlaySelected = doc.overlays.length - 1; }
+  function duplicateOverlay(i: number) {
+    const c = JSON.parse(JSON.stringify(doc.overlays[i])) as FxOverlayJson;
+    c.name = (c.name ?? "overlay") + " copy";
+    // nudge the copy so it doesn't sit exactly on the original
+    if (c.rect) c.rect = [c.rect[0] + 120, c.rect[1], c.rect[2], c.rect[3]];
+    doc.overlays.splice(i + 1, 0, c);
+    overlaySelected = i + 1;
+  }
+  function moveOverlay(i: number, d: number) {
+    const j2 = i + d; if (j2 < 0 || j2 >= doc.overlays.length) return;
+    const t = doc.overlays[i]; doc.overlays[i] = doc.overlays[j2]; doc.overlays[j2] = t;
+    if (overlaySelected === i) overlaySelected = j2; else if (overlaySelected === j2) overlaySelected = i;
+  }
   function oRect(i: number, v: number) { if (!ocur || Number.isNaN(v)) return; if (!ocur.rect) ocur.rect = [0, 0, 0, 0]; ocur.rect[i] = Math.round(v); }
   function oToggle(key: "breathe" | "sway" | "bob" | "drift" | "warp" | "pulse", on: boolean) {
     if (!ocur) return;
@@ -303,6 +316,11 @@
               <input id="fx-dur" type="range" min="0" max="10000" step="100" value={cur.duration_ms ?? 0}
                      oninput={(e) => { const v = +(e.currentTarget as HTMLInputElement).value; if (v > 0) cur!.duration_ms = v; else delete cur!.duration_ms; }} class="w-full accent-amber-400" />
             </div>
+          </div>
+          <div>
+            <div class="flex items-baseline justify-between"><label class="text-[10px] text-zinc-400" for="fx-delay">Delay after event</label><span class="text-[10px] font-mono text-zinc-500">{cur.delay_ms ?? 0} ms</span></div>
+            <input id="fx-delay" type="range" min="0" max="5000" step="50" value={cur.delay_ms ?? 0}
+                   oninput={(e) => { const v = +(e.currentTarget as HTMLInputElement).value; if (v > 0) cur!.delay_ms = v; else delete cur!.delay_ms; }} class="w-full accent-amber-400" />
           </div>
           <button type="button" onclick={() => onTest?.(triggerSel)}
                   class="text-[11px] px-2 py-1 rounded bg-white/5 text-zinc-200 border border-white/10 hover:bg-white/10">▶ Test {triggerSel.replace("MSG_", "")}</button>
@@ -467,6 +485,9 @@
             <input type="checkbox" checked={o.enabled !== false} class="accent-amber-400" onclick={(e) => e.stopPropagation()}
                    onchange={(e) => { const on = (e.currentTarget as HTMLInputElement).checked; if (on) delete o.enabled; else o.enabled = false; }} />
             <span class="flex-1 truncate">{o.name ?? `overlay ${i}`} <span class="text-zinc-500">· {o.image}</span></span>
+            <button type="button" class="text-zinc-500 hover:text-zinc-200 px-0.5" title="move up" onclick={(e) => { e.stopPropagation(); moveOverlay(i, -1); }}>▲</button>
+            <button type="button" class="text-zinc-500 hover:text-zinc-200 px-0.5" title="move down" onclick={(e) => { e.stopPropagation(); moveOverlay(i, 1); }}>▼</button>
+            <button type="button" class="text-zinc-500 hover:text-zinc-200 px-0.5" title="duplicate" onclick={(e) => { e.stopPropagation(); duplicateOverlay(i); }}>⧉</button>
             <button type="button" class="text-zinc-500 hover:text-red-300 px-0.5" title="remove" onclick={(e) => { e.stopPropagation(); removeOverlay(i); }}>✕</button>
           </li>
         {/each}
@@ -480,6 +501,30 @@
           <input type="text" value={ocur.image} oninput={(e) => { ocur!.image = (e.currentTarget as HTMLInputElement).value; }}
                  class="w-full text-xs bg-black/30 border border-white/10 rounded px-2 py-1 text-zinc-200 font-mono" />
         </label>
+        <!-- event binding -->
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-[10px] text-zinc-400" for="ov-runs">Runs</label>
+            <select id="ov-runs" value={typeof ocur.trigger === "string" ? ocur.trigger : "idle"}
+                    onchange={(e) => { const v = (e.currentTarget as HTMLSelectElement).value; if (v === "idle") { delete ocur!.trigger; delete ocur!.duration_ms; delete ocur!.delay_ms; } else { ocur!.trigger = v; if (ocur!.duration_ms === undefined) ocur!.duration_ms = 3000; } }}
+                    class="w-full text-xs bg-black/30 border border-white/10 rounded px-2 py-1 text-zinc-200">
+              <option value="idle">Always (idle)</option>
+              {#each EVENTS as ev}<option value={ev}>{ev.replace("MSG_", "on ")}</option>{/each}
+            </select>
+          </div>
+          {#if typeof ocur.trigger === "string"}
+            <div class="flex items-end">
+              <button type="button" onclick={() => onTest?.(ocur!.trigger as string)}
+                      class="w-full text-[11px] px-2 py-1 rounded bg-white/5 text-zinc-200 border border-white/10 hover:bg-white/10">▶ Test</button>
+            </div>
+          {/if}
+        </div>
+        {#if typeof ocur.trigger === "string"}
+          <div class="grid grid-cols-2 gap-1">
+            {@render num("show for ms", ocur, "duration_ms", 100, 30000, 100)}
+            {@render num("delay ms", ocur, "delay_ms", 0, 5000, 50)}
+          </div>
+        {/if}
         <div class="grid grid-cols-4 gap-1">
           {#each ["x", "y", "w", "h"] as k, i}
             <label class="text-[9px] text-zinc-500">{k}

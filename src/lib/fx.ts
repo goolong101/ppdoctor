@@ -30,6 +30,8 @@ export interface FxEmitterJson {
   rate?: number;
   burst?: number;
   duration_ms?: number;
+  /** Wait this long after the event before firing (sequencing). */
+  delay_ms?: number;
   trigger?: string | string[];
   wrap?: boolean;
   life_s?: number | [number, number];
@@ -81,6 +83,7 @@ export interface FxOverlayJson {
   trigger?: string | string[];
   duration_ms?: number;
   fade_ms?: number;
+  delay_ms?: number;
 }
 
 export interface FxDoc { particles: FxEmitterJson[]; overlays: FxOverlayJson[]; }
@@ -98,7 +101,7 @@ const SPRITE_SIZE = 64;
 const MAX_PARTICLES_TOTAL = 500;
 const MAX_PER_EMITTER = 300;
 const MAX_EMITTERS = 16;
-const MAX_OVERLAYS = 8;
+const MAX_OVERLAYS = 12;
 const MAX_MESH = 24;
 
 // ── presets: SOURCE-pixel units, identical table to applyPreset() ────────────
@@ -151,7 +154,7 @@ const PRESETS: Record<string, PresetRow> = {
  *  C++ load order: preset first, then every explicit field overrides. */
 export interface FxResolved {
   name: string; preset: string; slot: FxSlot; sprite: number; blend: "add" | "blend"; spawnMode: number;
-  maxN: number; rate: number; burst: number; durationMs: number; idle: boolean; triggers: string[];
+  maxN: number; rate: number; burst: number; durationMs: number; delayMs: number; idle: boolean; triggers: string[];
   wrap: boolean; lifeMin: number; lifeMax: number; speedMin: number; speedMax: number;
   angle: number; spread: number; gravity: number; drag: number; windX: number; windY: number; wander: number;
   sizeMin: number; sizeMax: number; grow: number; aspect: number; align: boolean; rotMin: number; rotMax: number;
@@ -210,7 +213,7 @@ export function resolveEmitter(j: FxEmitterJson): FxResolved {
     name: j.name ?? "emitter", preset: j.preset ?? "",
     slot: slotFromName(p?.z, 1), sprite: spriteFromName(p?.sprite), blend: (p?.blend === "add" ? "add" : p ? "blend" : "add"),
     spawnMode: spawnFromName(p?.spawn, 0),
-    maxN: p?.maxN ?? 100, rate: p?.rate ?? 0, burst: 0, durationMs: 0, idle: true, triggers: [],
+    maxN: p?.maxN ?? 100, rate: p?.rate ?? 0, burst: 0, durationMs: 0, delayMs: 0, idle: true, triggers: [],
     wrap: p?.wrap ?? false, lifeMin: p?.lifeMin ?? 1, lifeMax: p?.lifeMax ?? 2,
     speedMin: p?.speedMin ?? 0, speedMax: p?.speedMax ?? 0, angle: p?.angle ?? 270, spread: p?.spread ?? 0,
     gravity: p?.gravity ?? 0, drag: p?.drag ?? 1, windX: 0, windY: 0, wander: p?.wander ?? 0,
@@ -229,6 +232,7 @@ export function resolveEmitter(j: FxEmitterJson): FxResolved {
   if (typeof j.rate === "number") r.rate = j.rate;
   if (typeof j.burst === "number") r.burst = Math.trunc(j.burst);
   if (typeof j.duration_ms === "number") r.durationMs = Math.max(0, Math.trunc(j.duration_ms));
+  if (typeof j.delay_ms === "number") r.delayMs = Math.max(0, Math.trunc(j.delay_ms));
   if (typeof j.wrap === "boolean") r.wrap = j.wrap;
   [r.lifeMin, r.lifeMax] = rangeOf(j.life_s, r.lifeMin, r.lifeMax);
   [r.speedMin, r.speedMax] = rangeOf(j.speed, r.speedMin, r.speedMax);
@@ -278,7 +282,7 @@ interface Emitter {
   quad: { x: number; y: number }[] | null;   // screen px, TL TR BR BL
   px: number; py: number;
   clip: { x: number; y: number; w: number; h: number } | null;
-  pool: Particle[]; spawnAcc: number; activeUntil: number; lastMs: number; clock: number;
+  pool: Particle[]; spawnAcc: number; pendingAt: number; activeUntil: number; lastMs: number; clock: number;
 }
 interface Overlay {
   j: FxOverlayJson; img: HTMLImageElement | null; dst: { x: number; y: number; w: number; h: number };
@@ -288,8 +292,9 @@ interface Overlay {
   driftVX: number; driftVY: number; driftWrap: boolean;
   pulsePeriod: number; pulseDepth: number;
   warp: number; warpAmp: number; warpPeriod: number; warpFreq: number; cols: number; rows: number;
-  frameCols: number; frameRows: number; frameCount: number; frameFps: number;
-  idle: boolean; triggers: string[]; durationMs: number; fadeMs: number;
+  frameCols: number; frameRows: number; frameCount: number; frameFps: number; framePhase: number;
+  idle: boolean; triggers: string[]; durationMs: number; fadeMs: number; delayMs: number;
+  pendingAt: number;
   activeUntil: number; activeSince: number; offX: number; offY: number; lastMs: number;
 }
 
@@ -426,7 +431,7 @@ export class FxSim {
       if (r.maxN <= 0) continue;
       budget -= r.maxN;
       const quad = src.quad ? src.quad.map(q => ({ x: q[0] * sx, y: q[1] * sy })) : null;
-      const e: Emitter = { r, area, quad, px, py, clip, pool: [], spawnAcc: 0, activeUntil: 0, lastMs: 0, clock: 0 };
+      const e: Emitter = { r, area, quad, px, py, clip, pool: [], spawnAcc: 0, pendingAt: 0, activeUntil: 0, lastMs: 0, clock: 0 };
       for (let i = 0; i < r.maxN; i++) e.pool.push({ x: 0, y: 0, vx: 0, vy: 0, age: 0, life: 0, maxLife: 0, size: 1, rot: 0, rotV: 0, seed: 0, ci: 0, alive: false });
       if (r.idle) {
         if (r.wrap || (r.lifeMax <= 0 && r.rate <= 0)) {
@@ -456,12 +461,18 @@ export class FxSim {
         warpAmp: (j.warp?.amp ?? 6) * s, warpPeriod: Math.max(50, j.warp?.period_ms ?? 2000), warpFreq: j.warp?.freq ?? 1,
         cols: 1, rows: 1,
         frameCols: Math.max(1, Math.trunc(j.frames?.cols ?? 1)), frameRows: Math.max(1, Math.trunc(j.frames?.rows ?? 1)),
-        frameCount: 1, frameFps: Math.max(0, j.frames?.fps ?? 12),
+        frameCount: 1, frameFps: Math.max(0, j.frames?.fps ?? 12), framePhase: 0,
         idle: true, triggers: [], durationMs: Math.max(0, Math.trunc(j.duration_ms ?? 0)),
         fadeMs: Math.max(0, Math.trunc(j.fade_ms ?? 300)),
+        delayMs: Math.max(0, Math.trunc(j.delay_ms ?? 0)), pendingAt: 0,
         activeUntil: 0, activeSince: 0, offX: 0, offY: 0, lastMs: 0,
       };
       o.frameCount = Math.min(o.frameCols * o.frameRows, Math.max(1, Math.trunc(j.frames?.count ?? o.frameCols * o.frameRows)));
+      if (o.frameCount > 1) {
+        let h = 2166136261 >>> 0;
+        for (const ch of (j.name ?? "")) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+        o.framePhase = h % o.frameCount;
+      }
       if (o.warp) o.cols = o.rows = 12;
       if (typeof j.mesh === "number") o.cols = o.rows = Math.min(MAX_MESH, Math.max(1, Math.trunc(j.mesh)));
       const t = triggersOf(j.trigger, true); o.triggers = t.triggers; o.idle = t.idle;
@@ -514,11 +525,13 @@ export class FxSim {
   trigger(key: string, now: number) {
     for (const e of this.emitters) {
       if (!e.r.triggers.includes(key)) continue;
+      if (e.r.delayMs > 0) { e.pendingAt = now + e.r.delayMs; continue; }
       for (let i = 0; i < e.r.burst; i++) this.spawnOne(e);
       if (e.r.durationMs > 0) e.activeUntil = now + e.r.durationMs;
     }
     for (const o of this.overlays) {
       if (!o.triggers.includes(key)) continue;
+      if (o.delayMs > 0) { o.pendingAt = now + o.delayMs; continue; }
       o.activeSince = now; o.activeUntil = now + (o.durationMs > 0 ? o.durationMs : 2000);
     }
   }
@@ -569,6 +582,11 @@ export class FxSim {
   private stepEmitter(e: Emitter, dt: number, now: number) {
     const r = e.r;
     e.clock += dt;
+    if (e.pendingAt !== 0 && now !== 0 && now >= e.pendingAt) {
+      e.pendingAt = 0;
+      for (let i = 0; i < r.burst; i++) this.spawnOne(e);
+      if (r.durationMs > 0) e.activeUntil = now + r.durationMs;
+    }
     const emitting = r.idle || (e.activeUntil !== 0 && now !== 0 && now < e.activeUntil);
     if (emitting && r.rate > 0) {
       e.spawnAcc += r.rate * dt;
@@ -647,6 +665,9 @@ export class FxSim {
     if (!o.lastMs) o.lastMs = now;
     const dt = clamp((now - o.lastMs) / 1000, 0, 0.05);
     o.lastMs = now;
+    if (o.pendingAt !== 0 && now >= o.pendingAt) {
+      o.pendingAt = 0; o.activeSince = now; o.activeUntil = now + (o.durationMs > 0 ? o.durationMs : 2000);
+    }
     let vis = 1;
     if (!o.idle) {
       if (o.activeUntil === 0 || now >= o.activeUntil) return;
@@ -677,7 +698,7 @@ export class FxSim {
     ctx.globalAlpha = clamp(alpha, 0, 1);
     const cols = o.cols, rows = o.rows;
     // current sprite-sheet frame → source sub-rect
-    const fi = (o.frameCount > 1 && o.frameFps > 0) ? Math.trunc(tsec * o.frameFps) % o.frameCount : 0;
+    const fi = (o.frameCount > 1 && o.frameFps > 0) ? (Math.trunc(tsec * o.frameFps) + o.framePhase) % o.frameCount : 0;
     const iw = o.img.naturalWidth / o.frameCols, ih = o.img.naturalHeight / o.frameRows;
     const fox = (fi % o.frameCols) * iw, foy = Math.trunc(fi / o.frameCols) * ih;
     // vertex grid (same displacement math as the Pi's mesh)
