@@ -3894,6 +3894,19 @@
     lampPreviewRaf = requestAnimationFrame(tick);
   });
 
+  /** Tab-driven mode: Lamps tab = wand lamp editor open, Layers tab = layer
+   *  editing (lamp editor closed). Called from the panel tab buttons. */
+  function panelTabTo(tab: "lamps" | "layers") {
+    b2sPanelTab = tab;
+    if (tab === "layers") {
+      fxEditArea = false;
+      if (genB2sActive) closeGenB2sEditor();
+    } else if (!genB2sActive && selected) {
+      if (showingVideo) void openB2sEditorForVideo();
+      else if (b2sXml || b2sCacheBuf) void openB2sEditorForDefault();
+    }
+  }
+
   $effect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && genB2sActive) closeGenB2sEditor(); };
     window.addEventListener("keydown", onKey);
@@ -4524,9 +4537,9 @@
                   <!-- Lamps | Layers tab strip. Layers = particle emitters +
                        image overlays (same engine as the cabinet, fx.ts). -->
                   <div class="flex gap-1 text-[11px]">
-                    <button type="button" onclick={() => { b2sPanelTab = "lamps"; fxEditArea = false; }}
+                    <button type="button" onclick={() => panelTabTo("lamps")}
                       class="flex-1 px-2 py-1 rounded border {b2sPanelTab === 'lamps' ? 'bg-sky-500/15 text-sky-200 border-sky-500/40' : 'bg-white/5 text-zinc-400 border-white/10 hover:bg-white/10'}">Lamps</button>
-                    <button type="button" onclick={() => b2sPanelTab = "layers"}
+                    <button type="button" onclick={() => panelTabTo("layers")}
                       class="flex-1 px-2 py-1 rounded border {b2sPanelTab === 'layers' ? 'bg-sky-500/15 text-sky-200 border-sky-500/40' : 'bg-white/5 text-zinc-400 border-white/10 hover:bg-white/10'}">Layers{fxCurrent.particles.length + fxCurrent.overlays.length ? ` (${fxCurrent.particles.length + fxCurrent.overlays.length})` : ""}</button>
                   </div>
                   {#if b2sPanelTab === "layers"}
@@ -4695,9 +4708,9 @@
                 {:else if activePanel === "image"}
                   <div class="flex flex-col gap-2 flex-shrink-0 self-start">
                   <div class="flex gap-1 text-[11px]">
-                    <button type="button" onclick={() => b2sPanelTab = "lamps"}
+                    <button type="button" onclick={() => panelTabTo("lamps")}
                       class="flex-1 px-2 py-1 rounded border {b2sPanelTab === 'lamps' ? 'bg-sky-500/15 text-sky-200 border-sky-500/40' : 'bg-white/5 text-zinc-400 border-white/10 hover:bg-white/10'}">{showingVideo ? "Video" : "Image"}</button>
-                    <button type="button" onclick={() => b2sPanelTab = "layers"}
+                    <button type="button" onclick={() => panelTabTo("layers")}
                       class="flex-1 px-2 py-1 rounded border {b2sPanelTab === 'layers' ? 'bg-sky-500/15 text-sky-200 border-sky-500/40' : 'bg-white/5 text-zinc-400 border-white/10 hover:bg-white/10'}">Layers{fxCurrent.particles.length + fxCurrent.overlays.length + fxCurrent.glows.length ? ` (${fxCurrent.particles.length + fxCurrent.overlays.length + fxCurrent.glows.length})` : ""}</button>
                   </div>
                   {#if b2sPanelTab === "layers"}
