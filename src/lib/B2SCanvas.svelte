@@ -1001,7 +1001,9 @@
   <!-- Always-on diagnostic strip so we can see exactly where the pipeline drops out:
        base · bulbs · motion · sprites · evt.attract presence · source.
        If any of these don't progress as expected, the failure is upstream. -->
-  <div class="absolute bottom-2 right-2 text-[10px] font-mono text-zinc-300 bg-black/60 px-2 py-1 rounded leading-snug">
+  <!-- pointer-events-none: this strip sits over the canvas and was swallowing
+       drags (trapezoid corners / overlays near the bottom edge). -->
+  <div class="absolute bottom-2 right-2 text-[10px] font-mono text-zinc-300 bg-black/60 px-2 py-1 rounded leading-snug pointer-events-none select-none">
     base:{base ? `${baseW}×${baseH}` : "—"} ·
     grill:{grillH} ·
     bulbs:{bulbs.length} ·
