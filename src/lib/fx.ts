@@ -92,7 +92,7 @@ export interface FxDoc { particles: FxEmitterJson[]; overlays: FxOverlayJson[]; 
 
 export const FX_PRESETS = [
   "starfield", "rain", "snow", "smoke", "fire", "flames", "embers", "sparkles", "fireflies", "meteors", "laser", "bubbles",
-  "lightning", "confetti", "leaves", "petals", "dust", "fog", "steam", "sparks", "warp", "raindrops", "wisp",
+  "lightning", "confetti", "leaves", "petals", "dust", "fog", "steam", "sparks", "warp", "raindrops", "wisp", "drips", "faucet",
 ] as const;
 export type FxPreset = typeof FX_PRESETS[number];
 
@@ -149,6 +149,8 @@ const PRESETS: Record<string, PresetRow> = {
   warp:      row("streak", "add",   "below", "area",   200, 120,  0.4,  0.9,  900,  1800, 0,   8,   0, 1,    0,  2,  4,   0,    0,    0,   "fade_in_out", 0.9,  0,   0,   false, 1,  14, true,  [[255,255,255],[160,200,255]]),
   raindrops: row("dot",    "blend", "above", "area",   80,  10,   2,    5,    0,    10,   90,  0,   90,0.35, 0,  3,  8,   0,    0,    0,   "fade_out",    0.55, 0,   0,   false, 3,  1,  false, [[200,225,255]]),
   wisp:      row("soft",   "blend", "above", "point",  140, 55,   3,    5,    70,   110,  270, 3,   0, 1,    130,14, 26,  0.9,  0,    0,   "fade_in_out", 0.5,  0,   0,   false, 4,  1,  false, [[235,235,240],[170,175,185]]),
+  drips:     row("dot",    "blend", "above", "top",    40,  6,    4,    6,    5,    15,   90,  2,   700,1,   0,  5,  9,   0.2,  0,    0,   "flat",        0.75, 0,   0,   false, 2,  1.6,true,  [[185,215,255],[225,240,255]]),
+  faucet:    row("dot",    "blend", "above", "point",  90,  26,   3,    4,    20,   45,   90,  1,   900,1,   0,  5,  8,   0.3,  0,    0,   "flat",        0.8,  0,   0,   false, 1.5,2,  true,  [[190,220,255],[235,245,255]]),
   laser:     row("streak", "add",   "above", "point",  40,  0,    0.15, 0.25, 1400, 1800, 0,   1,   0, 1,    0,  8,  12,  0,    0,    0,   "fade_out",    1.0,  0,   0,   false, 0,  10, true,  [[255,60,60]]),
 };
 
@@ -836,6 +838,6 @@ export const OVERLAY_LIBRARY: FxOverlayAsset[] = [
 export const PRESET_LABELS: Record<string, string> = {
   starfield: "Starfield (moving stars)", bubbles: "Bubbles", lightning: "Lightning", confetti: "Confetti",
   leaves: "Falling leaves", petals: "Petals", dust: "Dust motes", fog: "Fog", steam: "Steam", sparks: "Sparks shower",
-  warp: "Warp / hyperspace", raindrops: "Rain on glass", wisp: "Wisp (snake smoke)", rain: "Rain", snow: "Snow", smoke: "Smoke", fire: "Fire (sparks)", flames: "Flames (dense fire)",
+  warp: "Warp / hyperspace", raindrops: "Rain on glass", wisp: "Wisp (snake smoke)", drips: "Water drips", faucet: "Faucet stream", rain: "Rain", snow: "Snow", smoke: "Smoke", fire: "Fire (sparks)", flames: "Flames (dense fire)",
   embers: "Embers", sparkles: "Sparkles", fireflies: "Fireflies", meteors: "Meteors", laser: "Laser fire",
 };
