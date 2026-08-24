@@ -3894,6 +3894,12 @@
     lampPreviewRaf = requestAnimationFrame(tick);
   });
 
+  $effect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && genB2sActive) closeGenB2sEditor(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   function closeGenB2sEditor() {
     genB2sActive = false;
     genB2sBulbs = [];
@@ -4130,12 +4136,12 @@
                   {#if showingVideo}
                     <button
                       type="button"
-                      onclick={openB2sEditorForVideo}
+                      onclick={() => genB2sActive ? closeGenB2sEditor() : openB2sEditorForVideo()}
                       class="text-[11px] px-2 py-1 rounded
                              bg-sky-500/10 text-sky-200 border border-sky-500/30
                              hover:bg-sky-500/20 transition-colors"
                       title="Open the b2s editor for this video — click to wand-add lamps. Result overlays on the video at runtime."
-                    >Edit B2S</button>
+                    >{genB2sActive ? "Close B2S editor" : "Edit B2S"}</button>
                   {:else if b2sXml || b2sCacheBuf}
                     <!-- Same wand editor for authored-b2s tables: composite is
                          the b2s base image, lamps import from the .directb2s /
@@ -4143,12 +4149,12 @@
                          no button until 2026-08-23). -->
                     <button
                       type="button"
-                      onclick={openB2sEditorForDefault}
+                      onclick={() => genB2sActive ? closeGenB2sEditor() : openB2sEditorForDefault()}
                       class="text-[11px] px-2 py-1 rounded
                              bg-sky-500/10 text-sky-200 border border-sky-500/30
                              hover:bg-sky-500/20 transition-colors"
                       title="Open the lamp editor for this backglass — magic-wand click to add glow lamps, right-click a lamp for actions."
-                    >Edit B2S</button>
+                    >{genB2sActive ? "Close B2S editor" : "Edit B2S"}</button>
                   {/if}
                   <!-- Zoom controls — visible only while the b2s editor is
                        active. Placed on the title row (same level as the
@@ -4169,6 +4175,9 @@
                                      hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed text-zinc-200"
                               aria-label="Zoom in">+</button>
                     </div>
+                    <button type="button" onclick={closeGenB2sEditor}
+                            class="text-[11px] px-2 py-1 rounded bg-red-500/10 text-red-200 border border-red-500/30 hover:bg-red-500/20 transition-colors"
+                            title="Exit the lamp editor (Esc) — unsaved wand lamps are kept in memory until you switch tables">✕ Close editor</button>
                   {/if}
                   <label class="flex items-center gap-2 text-sm text-zinc-400 cursor-pointer hover:text-zinc-200 transition-colors select-none">
                     <input
