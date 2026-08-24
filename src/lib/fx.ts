@@ -108,6 +108,8 @@ const MAX_PER_EMITTER = 300;
 const MAX_EMITTERS = 16;
 const MAX_OVERLAYS = 12;
 const MAX_MESH = 24;
+/** Overdraw budget mirrored from b2s_fx.cpp - the Pi GPU wedges past this. */
+export const FX_FILL_BUDGET_PX = 6 * 1920 * 1080;
 
 // ── presets: SOURCE-pixel units, identical table to applyPreset() ────────────
 // [sprite, blend, z, spawn, maxN, rate, lifeMin, lifeMax, speedMin, speedMax,
@@ -455,6 +457,7 @@ export class FxSim {
     if (!doc) return;
     const s = (sx + sy) * 0.5;
     let budget = MAX_PARTICLES_TOTAL;
+    let fillUsed = 0;
     for (const j of (doc.particles ?? []).slice(0, MAX_EMITTERS)) {
       if (!j || typeof j !== "object") continue;
       if (j.enabled === false) continue;
@@ -471,6 +474,18 @@ export class FxSim {
       const py = src.point ? src.point[1] * sy : area.y + area.h * 0.5;
       const clip = src.clip ? { x: Math.trunc(src.clip[0] * sx), y: Math.trunc(src.clip[1] * sy),
                                 w: Math.trunc(src.clip[2] * sx + 0.5), h: Math.trunc(src.clip[3] * sy + 0.5) } : null;
+      {
+        let effLive = r.maxN;
+        if (!(r.wrap || r.lifeMax <= 0) && r.rate > 0) effLive = Math.min(effLive, r.rate * r.lifeMax);
+        const fill = effLive * r.sizeMax * r.sizeMax * Math.max(1, r.aspect);
+        if (fillUsed + fill > FX_FILL_BUDGET_PX) {
+          const avail = Math.max(0, FX_FILL_BUDGET_PX - fillUsed);
+          const k = fill > 0 ? avail / fill : 0;
+          r.maxN = Math.max(0, Math.trunc(r.maxN * k));
+          r.rate = r.rate * k;
+          fillUsed += avail;
+        } else fillUsed += fill;
+      }
       if (r.maxN > budget) r.maxN = budget;
       if (r.maxN <= 0) continue;
       budget -= r.maxN;
@@ -873,17 +888,26 @@ export function fxDocIntoEventMap(em: any, doc: FxDoc): void {
  *  global cap (applied in list order, same as b2s_fx.cpp load()). */
 export const FX_PARTICLE_CAP = MAX_PARTICLES_TOTAL;
 export const FX_MAX_TEXTURE = 2048;
-export function fxBudget(doc: FxDoc): { total: number; rows: { name: string; want: number; got: number }[] } {
-  let budget = MAX_PARTICLES_TOTAL, total = 0;
+export function fxBudget(doc: FxDoc): { total: number; fillPct: number; rows: { name: string; want: number; got: number }[] } {
+  let budget = MAX_PARTICLES_TOTAL, total = 0, fillUsed = 0;
   const rows: { name: string; want: number; got: number }[] = [];
   for (const j of (doc.particles ?? []).slice(0, MAX_EMITTERS)) {
     if (!j || j.enabled === false) continue;
-    const want = resolveEmitter(j).maxN;
-    const got = Math.max(0, Math.min(want, budget));
+    const r = resolveEmitter(j);
+    const want = r.maxN;
+    let effLive = r.maxN;
+    if (!(r.wrap || r.lifeMax <= 0) && r.rate > 0) effLive = Math.min(effLive, r.rate * r.lifeMax);
+    const fill = effLive * r.sizeMax * r.sizeMax * Math.max(1, r.aspect);
+    let got = Math.max(0, Math.min(want, budget));
+    if (fillUsed + fill > FX_FILL_BUDGET_PX) {
+      const k = fill > 0 ? Math.max(0, FX_FILL_BUDGET_PX - fillUsed) / fill : 0;
+      got = Math.min(got, Math.trunc(want * k));
+    }
+    fillUsed += fill;
     budget -= got; total += want;
     rows.push({ name: j.name ?? "emitter", want, got });
   }
-  return { total, rows };
+  return { total, fillPct: Math.round(fillUsed / FX_FILL_BUDGET_PX * 100), rows };
 }
 
 /** Built-in overlay assets bundled with PP Doctor (static/fx/*). Picking one

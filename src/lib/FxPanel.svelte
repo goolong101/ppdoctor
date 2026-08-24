@@ -258,9 +258,12 @@
 
     <!-- particle budget (renderer cap, applied in list order) -->
     {#if doc.particles.length > 0}
-      <div class="text-[10px] {budget.total > FX_PARTICLE_CAP ? 'text-amber-300' : 'text-zinc-500'}">
-        <div class="flex justify-between"><span>Particle budget</span><span class="font-mono">{budget.total} / {FX_PARTICLE_CAP}</span></div>
-        <div class="h-1 rounded bg-white/10 mt-0.5 overflow-hidden"><div class="h-full {budget.total > FX_PARTICLE_CAP ? 'bg-amber-400' : 'bg-emerald-400/70'}" style="width:{Math.min(100, budget.total / FX_PARTICLE_CAP * 100)}%"></div></div>
+      <div class="text-[10px] {budget.total > FX_PARTICLE_CAP || budget.fillPct > 100 ? 'text-amber-300' : 'text-zinc-500'}">
+        <div class="flex justify-between"><span>Particle budget</span><span class="font-mono">{budget.total} / {FX_PARTICLE_CAP} · GPU load {budget.fillPct}%</span></div>
+        <div class="h-1 rounded bg-white/10 mt-0.5 overflow-hidden"><div class="h-full {budget.total > FX_PARTICLE_CAP || budget.fillPct > 100 ? 'bg-amber-400' : 'bg-emerald-400/70'}" style="width:{Math.min(100, Math.max(budget.total / FX_PARTICLE_CAP, budget.fillPct / 100) * 100)}%"></div></div>
+        {#if budget.fillPct > 100}
+          <div class="mt-1 leading-snug">⚠ GPU load over 100% — the cabinet auto-shrinks the later layers to protect itself (big soft sprites like fog/smoke count hardest). Reduce Count or Size max.</div>
+        {/if}
         {#if trimmed.length}
           <div class="mt-1 leading-snug">⚠ Over the cabinet's {FX_PARTICLE_CAP}-particle cap. Layers are filled top-down, so these get cut:
             {#each trimmed as t, i}{i ? ", " : " "}<span class="font-mono">{t.name}</span> ({t.got}/{t.want}){/each}. Lower some Counts or move the important layers up.</div>
