@@ -4099,6 +4099,19 @@
                              hover:bg-sky-500/20 transition-colors"
                       title="Open the b2s editor for this video — click to wand-add lamps. Result overlays on the video at runtime."
                     >Edit B2S</button>
+                  {:else if b2sXml || b2sCacheBuf}
+                    <!-- Same wand editor for authored-b2s tables: composite is
+                         the b2s base image, lamps import from the .directb2s /
+                         _PP sidecar (openB2sEditorForDefault existed but had
+                         no button until 2026-08-23). -->
+                    <button
+                      type="button"
+                      onclick={openB2sEditorForDefault}
+                      class="text-[11px] px-2 py-1 rounded
+                             bg-sky-500/10 text-sky-200 border border-sky-500/30
+                             hover:bg-sky-500/20 transition-colors"
+                      title="Open the lamp editor for this backglass — magic-wand click to add glow lamps, right-click a lamp for actions."
+                    >Edit B2S</button>
                   {/if}
                   <!-- Zoom controls — visible only while the b2s editor is
                        active. Placed on the title row (same level as the
