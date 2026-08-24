@@ -42,6 +42,8 @@ export interface FxEmitterJson {
   drag?: number;
   wind?: [number, number];
   wander?: number;
+  /** Shared wander phase → serpentine column (wisp). */
+  coherent?: boolean;
   size?: number | [number, number];
   grow?: number;
   aspect?: number;
@@ -90,7 +92,7 @@ export interface FxDoc { particles: FxEmitterJson[]; overlays: FxOverlayJson[]; 
 
 export const FX_PRESETS = [
   "starfield", "rain", "snow", "smoke", "fire", "flames", "embers", "sparkles", "fireflies", "meteors", "laser", "bubbles",
-  "lightning", "confetti", "leaves", "petals", "dust", "fog", "steam", "sparks", "warp", "raindrops",
+  "lightning", "confetti", "leaves", "petals", "dust", "fog", "steam", "sparks", "warp", "raindrops", "wisp",
 ] as const;
 export type FxPreset = typeof FX_PRESETS[number];
 
@@ -146,6 +148,7 @@ const PRESETS: Record<string, PresetRow> = {
   sparks:    row("dot",    "add",   "above", "point",  120, 60,   0.4,  1.0,  300,  700,  270, 40,  900,0.95,0,  2,  5,   0,    0,    0,   "fade_out",    1.0,  0,   0,   false, 0,  3,  true,  [[255,255,255],[255,230,120],[255,140,40]]),
   warp:      row("streak", "add",   "below", "area",   200, 120,  0.4,  0.9,  900,  1800, 0,   8,   0, 1,    0,  2,  4,   0,    0,    0,   "fade_in_out", 0.9,  0,   0,   false, 1,  14, true,  [[255,255,255],[160,200,255]]),
   raindrops: row("dot",    "blend", "above", "area",   80,  10,   2,    5,    0,    10,   90,  0,   90,0.35, 0,  3,  8,   0,    0,    0,   "fade_out",    0.55, 0,   0,   false, 3,  1,  false, [[200,225,255]]),
+  wisp:      row("soft",   "blend", "above", "point",  140, 55,   3,    5,    70,   110,  270, 3,   0, 1,    130,14, 26,  0.9,  0,    0,   "fade_in_out", 0.5,  0,   0,   false, 4,  1,  false, [[235,235,240],[170,175,185]]),
   laser:     row("streak", "add",   "above", "point",  40,  0,    0.15, 0.25, 1400, 1800, 0,   1,   0, 1,    0,  8,  12,  0,    0,    0,   "fade_out",    1.0,  0,   0,   false, 0,  10, true,  [[255,60,60]]),
 };
 
@@ -158,7 +161,7 @@ export interface FxResolved {
   wrap: boolean; lifeMin: number; lifeMax: number; speedMin: number; speedMax: number;
   angle: number; spread: number; gravity: number; drag: number; windX: number; windY: number; wander: number;
   sizeMin: number; sizeMax: number; grow: number; aspect: number; align: boolean; rotMin: number; rotMax: number;
-  ramp: FxColor[]; colorRandom: boolean; alphaCurve: number; alphaMax: number; twinkleHz: number; twinkleAmt: number; prewarmS: number;
+  ramp: FxColor[]; colorRandom: boolean; coherent: boolean; alphaCurve: number; alphaMax: number; twinkleHz: number; twinkleAmt: number; prewarmS: number;
   pulsePeriod: number; pulseDepth: number;
   area: [number, number, number, number] | null; point: [number, number] | null; clip: [number, number, number, number] | null;
   quad: [number, number][] | null;
@@ -220,6 +223,7 @@ export function resolveEmitter(j: FxEmitterJson): FxResolved {
     sizeMin: p?.sizeMin ?? 4, sizeMax: p?.sizeMax ?? 8, grow: p?.grow ?? 0, aspect: p?.aspect ?? 1, align: p?.align ?? false,
     rotMin: p?.rotMin ?? 0, rotMax: p?.rotMax ?? 0, ramp: p?.ramp ?? [[255, 255, 255]],
     colorRandom: j.preset === "confetti" || j.preset === "leaves" || j.preset === "petals",
+    coherent: j.preset === "wisp",
     alphaCurve: alphaCurveFromName(p?.alpha, 1), alphaMax: p?.alphaMax ?? 1, twinkleHz: p?.twHz ?? 0, twinkleAmt: p?.twAmt ?? 0,
     prewarmS: p?.prewarm ?? 0, pulsePeriod: 0, pulseDepth: 0, area: null, point: null, clip: null, quad: null,
   };
@@ -247,6 +251,7 @@ export function resolveEmitter(j: FxEmitterJson): FxResolved {
   [r.rotMin, r.rotMax] = rangeOf(j.rotate, r.rotMin, r.rotMax);
   r.ramp = rampOf(j.color, r.ramp);
   if (typeof j.color_random === "boolean") r.colorRandom = j.color_random;
+  if (typeof j.coherent === "boolean") r.coherent = j.coherent;
   r.alphaCurve = alphaCurveFromName(j.alpha, r.alphaCurve);
   if (typeof j.alpha_max === "number") r.alphaMax = Math.min(1, Math.max(0, j.alpha_max));
   if (typeof j.twinkle_hz === "number") r.twinkleHz = j.twinkle_hz;
@@ -574,7 +579,7 @@ export class FxSim {
     p.age = 0;
     p.size = frange(r.sizeMin, r.sizeMax);
     p.rot = frand() * 360; p.rotV = frange(r.rotMin, r.rotMax);
-    p.seed = frand() * 6.2831;
+    p.seed = r.coherent ? 0 : frand() * 6.2831;
     p.ci = r.ramp.length ? Math.trunc(frand() * r.ramp.length) % r.ramp.length : 0;
     p.alive = true;
   }
@@ -831,6 +836,6 @@ export const OVERLAY_LIBRARY: FxOverlayAsset[] = [
 export const PRESET_LABELS: Record<string, string> = {
   starfield: "Starfield (moving stars)", bubbles: "Bubbles", lightning: "Lightning", confetti: "Confetti",
   leaves: "Falling leaves", petals: "Petals", dust: "Dust motes", fog: "Fog", steam: "Steam", sparks: "Sparks shower",
-  warp: "Warp / hyperspace", raindrops: "Rain on glass", rain: "Rain", snow: "Snow", smoke: "Smoke", fire: "Fire (sparks)", flames: "Flames (dense fire)",
+  warp: "Warp / hyperspace", raindrops: "Rain on glass", wisp: "Wisp (snake smoke)", rain: "Rain", snow: "Snow", smoke: "Smoke", fire: "Fire (sparks)", flames: "Flames (dense fire)",
   embers: "Embers", sparkles: "Sparkles", fireflies: "Fireflies", meteors: "Meteors", laser: "Laser fire",
 };
