@@ -4405,7 +4405,12 @@
                       ></video>
                       <!-- FX preview over the video — same engine as the Pi's
                            loadFxFromImageMap (authoring space = 1920×1080). -->
-                      <FxVideoPreview bind:this={fxVideoRef} fxDoc={fxCurrent} fxImageResolver={fxResolveImage} />
+                      <FxVideoPreview bind:this={fxVideoRef} fxDoc={fxCurrent} fxImageResolver={fxResolveImage}
+                        fxOverlaySelected={b2sPanelTab === "layers" && !genB2sActive ? fxOverlaySel : -1}
+                        onFxOverlayMove={(i, x, y) => { const o = fxCurrent.overlays[i]; if (o) { const r = o.rect ?? [0, 0, 0, 0]; o.rect = [x, y, r[2], r[3]]; } }}
+                        onFxOverlayResize={(i, w, h) => { const o = fxCurrent.overlays[i]; if (o) { const r = o.rect ?? [0, 0, 0, 0]; o.rect = [r[0], r[1], w, h]; } }}
+                        fxGlowSelected={b2sPanelTab === "layers" && !genB2sActive ? fxGlowSel : -1}
+                        onFxGlowMove={(i, x, y) => { const g = fxCurrent.glows[i]; if (g) { g.x = x; g.y = y; } }} />
 
                       <!-- B2S editor overlay (snippet rendered identically in
                            the B2S preview branch below — so VPU downloads,
