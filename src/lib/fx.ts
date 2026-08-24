@@ -457,7 +457,16 @@ export class FxSim {
     if (!doc) return;
     const s = (sx + sy) * 0.5;
     let budget = MAX_PARTICLES_TOTAL;
-    let fillUsed = 0;
+    // Proportional fill-rate pre-pass (mirrors b2s_fx.cpp): one global scale.
+    let fillTotal = 0;
+    for (const j of (doc.particles ?? []).slice(0, MAX_EMITTERS)) {
+      if (!j || typeof j !== "object" || j.enabled === false) continue;
+      const t = resolveEmitter(j);
+      let effLive = t.maxN;
+      if (!(t.wrap || t.lifeMax <= 0) && t.rate > 0) effLive = Math.min(effLive, t.rate * t.lifeMax);
+      fillTotal += effLive * (t.sizeMax * s) * (t.sizeMax * s) * Math.max(1, t.aspect);
+    }
+    const fillScale = fillTotal > FX_FILL_BUDGET_PX && fillTotal > 0 ? FX_FILL_BUDGET_PX / fillTotal : 1;
     for (const j of (doc.particles ?? []).slice(0, MAX_EMITTERS)) {
       if (!j || typeof j !== "object") continue;
       if (j.enabled === false) continue;
@@ -474,17 +483,9 @@ export class FxSim {
       const py = src.point ? src.point[1] * sy : area.y + area.h * 0.5;
       const clip = src.clip ? { x: Math.trunc(src.clip[0] * sx), y: Math.trunc(src.clip[1] * sy),
                                 w: Math.trunc(src.clip[2] * sx + 0.5), h: Math.trunc(src.clip[3] * sy + 0.5) } : null;
-      {
-        let effLive = r.maxN;
-        if (!(r.wrap || r.lifeMax <= 0) && r.rate > 0) effLive = Math.min(effLive, r.rate * r.lifeMax);
-        const fill = effLive * r.sizeMax * r.sizeMax * Math.max(1, r.aspect);
-        if (fillUsed + fill > FX_FILL_BUDGET_PX) {
-          const avail = Math.max(0, FX_FILL_BUDGET_PX - fillUsed);
-          const k = fill > 0 ? avail / fill : 0;
-          r.maxN = Math.max(0, Math.trunc(r.maxN * k));
-          r.rate = r.rate * k;
-          fillUsed += avail;
-        } else fillUsed += fill;
+      if (fillScale < 1) {
+        r.maxN = Math.max(1, Math.trunc(r.maxN * fillScale));
+        r.rate = r.rate * fillScale;
       }
       if (r.maxN > budget) r.maxN = budget;
       if (r.maxN <= 0) continue;
@@ -891,19 +892,20 @@ export const FX_MAX_TEXTURE = 2048;
 export function fxBudget(doc: FxDoc): { total: number; fillPct: number; rows: { name: string; want: number; got: number }[] } {
   let budget = MAX_PARTICLES_TOTAL, total = 0, fillUsed = 0;
   const rows: { name: string; want: number; got: number }[] = [];
+  const pre: { j: FxEmitterJson; r: ReturnType<typeof resolveEmitter> }[] = [];
   for (const j of (doc.particles ?? []).slice(0, MAX_EMITTERS)) {
     if (!j || j.enabled === false) continue;
     const r = resolveEmitter(j);
-    const want = r.maxN;
+    pre.push({ j, r });
     let effLive = r.maxN;
     if (!(r.wrap || r.lifeMax <= 0) && r.rate > 0) effLive = Math.min(effLive, r.rate * r.lifeMax);
-    const fill = effLive * r.sizeMax * r.sizeMax * Math.max(1, r.aspect);
-    let got = Math.max(0, Math.min(want, budget));
-    if (fillUsed + fill > FX_FILL_BUDGET_PX) {
-      const k = fill > 0 ? Math.max(0, FX_FILL_BUDGET_PX - fillUsed) / fill : 0;
-      got = Math.min(got, Math.trunc(want * k));
-    }
-    fillUsed += fill;
+    fillUsed += effLive * r.sizeMax * r.sizeMax * Math.max(1, r.aspect);
+  }
+  const k = fillUsed > FX_FILL_BUDGET_PX && fillUsed > 0 ? FX_FILL_BUDGET_PX / fillUsed : 1;
+  for (const { j, r } of pre) {
+    const want = r.maxN;
+    let got = k < 1 ? Math.max(1, Math.trunc(want * k)) : want;
+    got = Math.max(0, Math.min(got, budget));
     budget -= got; total += want;
     rows.push({ name: j.name ?? "emitter", want, got });
   }
