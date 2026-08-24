@@ -4,6 +4,7 @@
   // untouched stay absent so the preset default applies on the Pi. Every
   // control shows the effective value (preset default when unset).
   import { FX_PRESETS, PRESET_LABELS, SPRITE_NAMES, resolveEmitter, presetDefaults, fxBudget, FX_PARTICLE_CAP,
+           OVERLAY_LIBRARY, type FxOverlayAsset,
            type FxDoc, type FxEmitterJson, type FxOverlayJson } from "./fx";
 
   let {
@@ -13,6 +14,7 @@
     overlaySelected = $bindable(-1),
     onTest = null,
     liveStats = null,
+    onAddOverlayAsset = null,
   }: {
     doc?: FxDoc;
     selected?: number;
@@ -22,6 +24,9 @@
     /** Fire a MSG_* into the preview (triggered emitters/overlays). */
     onTest?: ((key: string) => void) | null;
     liveStats?: (() => { live: number; emitters: number; overlays: number }) | null;
+    /** Install a built-in overlay asset into this table (mirror + push) and
+     *  return a rect centered on the backglass — the page owns file IO. */
+    onAddOverlayAsset?: ((asset: FxOverlayAsset) => Promise<[number, number, number, number] | null>) | null;
   } = $props();
 
   // Canonical event names = the Pi's commands.json (MSG_BALLSAVED / MSG_BALLDRAIN
@@ -159,11 +164,25 @@
   function resetColors() { if (cur) delete cur.color; }
 
   // ── overlays
+  let addOverlaySel = $state<string>(OVERLAY_LIBRARY[0]?.id ?? "blank");
+  let addOverlayBusy = $state(false);
   let oSel = $derived(overlaySelected);
   let ocur = $derived(oSel >= 0 && oSel < doc.overlays.length ? doc.overlays[oSel] : null);
-  function addOverlay() {
-    const o: FxOverlayJson = { name: `overlay ${doc.overlays.length + 1}`, image: "fx/overlay.png", rect: [0, 0, 0, 0], z: "above" };
-    doc.overlays.push(o); overlaySelected = doc.overlays.length - 1;
+  async function addOverlay() {
+    const asset = OVERLAY_LIBRARY.find(a => a.id === addOverlaySel);
+    if (!asset) {
+      const o: FxOverlayJson = { name: `overlay ${doc.overlays.length + 1}`, image: "fx/overlay.png", rect: [0, 0, 0, 0], z: "above" };
+      doc.overlays.push(o); overlaySelected = doc.overlays.length - 1;
+      return;
+    }
+    addOverlayBusy = true;
+    try {
+      const rect = (await onAddOverlayAsset?.(asset)) ?? null;
+      const n = doc.overlays.filter(o => o.image === asset.file).length + 1;
+      const o: FxOverlayJson = { name: `${asset.id} ${n}`, image: asset.file, ...JSON.parse(JSON.stringify(asset.json)) };
+      if (rect) o.rect = rect;
+      doc.overlays.push(o); overlaySelected = doc.overlays.length - 1;
+    } finally { addOverlayBusy = false; }
   }
   function removeOverlay(i: number) { doc.overlays.splice(i, 1); if (overlaySelected >= doc.overlays.length) overlaySelected = doc.overlays.length - 1; }
   function oRect(i: number, v: number) { if (!ocur || Number.isNaN(v)) return; if (!ocur.rect) ocur.rect = [0, 0, 0, 0]; ocur.rect[i] = Math.round(v); }
@@ -429,8 +448,14 @@
 
   {:else}
     <!-- overlays -->
-    <button type="button" onclick={addOverlay}
-      class="text-[11px] px-2 py-1 rounded bg-amber-400/15 text-amber-200 border border-amber-400/40 hover:bg-amber-400/25">+ Add image overlay</button>
+    <div class="flex gap-1">
+      <select bind:value={addOverlaySel} class="flex-1 text-xs bg-black/30 border border-white/10 rounded px-2 py-1 text-zinc-200">
+        {#each OVERLAY_LIBRARY as a}<option value={a.id}>{a.label}</option>{/each}
+        <option value="blank">Custom image path…</option>
+      </select>
+      <button type="button" onclick={addOverlay} disabled={addOverlayBusy}
+        class="text-[11px] px-2 py-1 rounded {addOverlayBusy ? 'bg-white/5 text-zinc-600 border border-white/5' : 'bg-amber-400/15 text-amber-200 border border-amber-400/40 hover:bg-amber-400/25'}">{addOverlayBusy ? "…" : "+ Add"}</button>
+    </div>
     {#if doc.overlays.length === 0}
       <div class="text-[10px] text-zinc-500 leading-snug">PNG cut-outs with breathing / sway / bob / drift / warp. Put the PNG under the table's <span class="font-mono">default_image/</span> folder and reference it by relative path (e.g. <span class="font-mono">fx/ship.png</span>). A cut-out at "above" with an emitter at "below" keeps particles behind the character.</div>
     {:else}

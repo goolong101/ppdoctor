@@ -337,6 +337,8 @@
     ctx.restore();
   }
   export function fxTrigger(key: string) { fxSim.trigger(key, performance.now()); }
+  /** Source-pixel dimensions of the visible backglass (for centered placement). */
+  export function fxSourceDims() { return { w: baseW, h: Math.max(1, baseH - grillH) }; }
   export function fxStats() { return fxSim.stats; }
 
   // Pause the rAF loop when the document is hidden (PP Doctor backgrounded

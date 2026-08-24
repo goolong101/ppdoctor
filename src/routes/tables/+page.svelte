@@ -1917,6 +1917,29 @@
   let fxDirty     = $derived(JSON.stringify(fxCurrent) !== fxSavedJson);
   let b2sPanelTab = $state<"lamps" | "layers">("lamps");
   let b2sCanvasRef = $state<ReturnType<typeof B2SCanvas> | null>(null);
+  /** Install a bundled overlay asset (static/fx/*) into this table's mirror
+   *  and mark it dirty so the next push carries it to the cabinet. Returns a
+   *  rect (source px) centered on the backglass at ~28% of its width. */
+  async function fxInstallOverlayAsset(asset: import("$lib/fx").FxOverlayAsset): Promise<[number, number, number, number] | null> {
+    const folder = selected?.folder; const id = selected?.id;
+    if (!folder || id === undefined || id === null) return null;
+    try {
+      const resp = await fetch(asset.staticUrl);
+      const bytes = new Uint8Array(await resp.arrayBuffer());
+      const { cacheWriteBinary, dbMarkDirty, log } = await import("$lib/api");
+      await cacheWriteBinary(sshHost(), folder, "default_image", asset.file, bytes, cacheDir());
+      await dbMarkDirty(id, "default_image", asset.file);
+      log("[fx]", `installed overlay asset ${asset.file} into ${folder} (${bytes.length} B)`);
+    } catch (e) {
+      const { log } = await import("$lib/api");
+      log("[fx]", `overlay asset install FAILED: ${e}`);
+    }
+    const dims = b2sCanvasRef?.fxSourceDims?.() ?? { w: 1920, h: 1080 };
+    const w = Math.round(dims.w * 0.28);
+    const h = Math.round(w * asset.frameH / asset.frameW);
+    return [Math.round(dims.w / 2 - w / 2), Math.round(dims.h / 2 - h / 2), w, h];
+  }
+
   /** Overlay PNGs live under the table's default_image/ (mirror or Pi). */
   async function fxResolveImage(path: string): Promise<string | null> {
     const folder = selected?.folder;
@@ -4440,6 +4463,7 @@
                   {#if b2sPanelTab === "layers"}
                     <FxPanel bind:doc={fxCurrent} bind:selected={fxSelected} bind:editArea={fxEditArea} bind:overlaySelected={fxOverlaySel}
                              onTest={(k) => b2sCanvasRef?.fxTrigger(k)}
+                             onAddOverlayAsset={fxInstallOverlayAsset}
                              liveStats={() => b2sCanvasRef?.fxStats() ?? { live: 0, emitters: 0, overlays: 0 }} />
                     <div class="glass rounded-xl p-3 w-72 flex flex-col gap-1.5">
                       <div class="flex gap-2">

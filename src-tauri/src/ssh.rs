@@ -570,6 +570,11 @@ async fn sftp_upload_once(
         .await
         .map_err(|e| format!("sftp init: {}", e))?;
 
+    // Best-effort: make sure the remote parent directory exists (e.g. the
+    // first push of default_image/fx/<asset>.png into a table).
+    if let Some(pos) = remote_path.rfind('/') {
+        let _ = sftp.create_dir(remote_path[..pos].to_string()).await;
+    }
     {
         let mut file = sftp
             .create(remote_path)

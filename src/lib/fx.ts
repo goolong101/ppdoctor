@@ -791,6 +791,21 @@ export function fxBudget(doc: FxDoc): { total: number; rows: { name: string; wan
   return { total, rows };
 }
 
+/** Built-in overlay assets bundled with PP Doctor (static/fx/*). Picking one
+ *  installs the file into the table's default_image/fx/ (mirror + push) and
+ *  creates an overlay preconfigured for it — like a preset, but an image. */
+export interface FxOverlayAsset {
+  id: string; label: string; file: string;           // path relative to default_image/
+  staticUrl: string;                                  // bundled asset URL (fetchable)
+  frameW: number; frameH: number;                     // one frame, image px (for initial sizing)
+  json: Partial<FxOverlayJson>;                       // defaults (frames/blend/alpha/...)
+}
+export const OVERLAY_LIBRARY: FxOverlayAsset[] = [
+  { id: "fire", label: "Fire (real flames)", file: "fx/fire_sheet.png", staticUrl: "/fx/fire_sheet.png",
+    frameW: 256, frameH: 272,
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 15 }, blend: "add", alpha: 0.95, pivot: [0.5, 1.0] } },
+];
+
 /** Human labels for the panel. */
 export const PRESET_LABELS: Record<string, string> = {
   starfield: "Starfield (moving stars)", bubbles: "Bubbles", lightning: "Lightning", confetti: "Confetti",
