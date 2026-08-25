@@ -3418,6 +3418,7 @@
               x: Math.round(b.x), y: Math.round(b.y),
               w: Math.max(2, Math.round(b.width)), h: Math.max(2, Math.round(b.height)),
               kept: true, source: "scaffold" as const, feather: 0,
+              color: [255, 200, 80] as [number, number, number],
             }));
             log("[b2s-editor]", `imported ${imported.length} lamps from the parsed b2scache (source ${sourceW}x${sourceH})`);
           }
