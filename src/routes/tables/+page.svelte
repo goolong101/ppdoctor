@@ -3244,6 +3244,10 @@
       const decoded = img ? await maskFromBulbImageAttr(img, w, h) : undefined;
       const mask = decoded?.mask;
       const id = genB2sNextId++;
+      // Real Name preserved — the merged save deletes authored lamps by
+      // Name, so a synthetic L<n> label would break round-tripping.
+      const name = b.getAttribute("Name") || `L${id}`;
+      const isOurs = b.getAttribute("PPDoctor") === "1";
       // Color priority: sprite-sampled (always present when sprite decoded
       // successfully — recovers the saved lamp's actual tint) → composite
       // re-sample if available (fresh from the current video) → amber.
@@ -3253,7 +3257,7 @@
       } else if (mask && genB2sCompositePixels) {
         color = sampleLampColor(genB2sCompositePixels, genB2sCompositeW, genB2sCompositeH, x, y, mask, w, h);
       }
-      out.push({ id, label: `L${id}`, x, y, w, h, kept: true, source: "scaffold", mask, feather: 0, color });
+      out.push({ id, label: name, x, y, w, h, kept: true, source: isOurs ? "wand" : "scaffold", mask, feather: 0, color });
     }
     return { bulbs: out, sourceW, sourceH };
   }
@@ -3515,8 +3519,11 @@
             const sidecarPath = await cacheFilePath(sshHost(), folder, "default_image", "backglass_PP.directb2s", cacheDir());
             const sidecarParsed = await parseScaffoldDoc(sidecarPath);
             if (sidecarParsed.bulbs.length > 0) {
-              imported = sidecarParsed.bulbs;
-              log("[b2s-editor]", `loaded ${imported.length} bulbs from existing backglass_PP.directb2s sidecar`);
+              const authoredNames = new Set(imported.filter(b => b.origin === "authored").map(b => b.label));
+              imported = sidecarParsed.bulbs.map(b =>
+                b.source !== "wand" && authoredNames.has(b.label)
+                  ? { ...b, origin: "authored" as const } : b);
+              log("[b2s-editor]", `loaded ${imported.length} bulbs from existing backglass_PP.directb2s sidecar (${imported.filter(b => b.origin === "authored").length} originals)`);
             }
           }
         } catch (e) { log("[b2s-editor]", `sidecar probe skipped: ${e}`); }
@@ -3691,11 +3698,16 @@
     closeBulbMenu();
   }
   function discardBulb(id: number) {
-    // Discard now means immediate delete — no "kept=false purgatory". User
-    // feedback 2026-05-27: keeping discarded lamps around just clutters
-    // the editor since they don't get saved anyway. If the user wants to
-    // undo, that's a future undo-history feature; for now, click means gone.
-    genB2sBulbs = genB2sBulbs.filter(b => b.id !== id);
+    // Wand lamps: immediate delete — no "kept=false purgatory" (user
+    // feedback 2026-05-27). AUTHORED lamps are different: they exist in
+    // the original file, so "delete" = kept:false, shown as a ghost, and
+    // the merged save strips that <Bulb> node. Restorable until save.
+    const b = genB2sBulbs.find(x => x.id === id);
+    if (b?.origin === "authored") {
+      genB2sBulbs = genB2sBulbs.map(x => x.id === id ? { ...x, kept: false } : x);
+    } else {
+      genB2sBulbs = genB2sBulbs.filter(x => x.id !== id);
+    }
     closeBulbMenu();
   }
   /** Re-flood-fill the wand bulb at its center pixel using the current
@@ -3948,7 +3960,7 @@
     // Snapshot bulb center coords + compute motion bounds (used by
     // bulbAlpha's WAVE phase math). For runner motion we also need a
     // sorted rank lookup — done once per loop arm.
-    const bulbs = genB2sBulbs.map(b => ({
+    const bulbs = genB2sBulbs.filter(b => b.kept).map(b => ({
       id: b.id,
       cx: b.x + b.w / 2,
       cy: b.y + b.h / 2,
@@ -4369,7 +4381,16 @@
                       aria-label="Magic wand — left-click adds a lamp at the click point, right-click opens menu for a lamp under the cursor"
                     >
                       {#each genB2sBulbs as bulb, bulbIdx (bulb.id)}
-                        {#if bulb.origin === "authored" && !genB2sShowOriginals}
+                        {#if bulb.origin === "authored" && !bulb.kept}
+                          <!-- deleted original: ghost until saved (right-click to restore) -->
+                          <div class="absolute border border-dashed border-rose-400/70 bg-rose-500/10 pointer-events-none"
+                               style="left:{(bulb.x / genB2sCompositeW * 100).toFixed(3)}%;
+                                      top:{(bulb.y / genB2sCompositeH * 100).toFixed(3)}%;
+                                      width:{(bulb.w / genB2sCompositeW * 100).toFixed(3)}%;
+                                      height:{(bulb.h / genB2sCompositeH * 100).toFixed(3)}%;">
+                            <span class="absolute -top-4 left-0 text-[9px] text-rose-300 whitespace-nowrap bg-black/60 px-1 rounded">{bulb.label} — deleted on save</span>
+                          </div>
+                        {:else if bulb.origin === "authored" && !genB2sShowOriginals}
                           <!-- originals hidden via the eye toggle -->
                         {:else}
                         {#if genB2sPreviewAnim && showingVideo && bulb.mask}
@@ -4480,7 +4501,7 @@
                                  overflow-y: auto;"
                         >
                           <div class="px-3 py-1.5 text-zinc-300 border-b border-white/5 font-mono flex items-center justify-between gap-3">
-                            <span><b class="text-zinc-100">{menuBulb.label}</b><span class="text-zinc-600 ml-1">({menuBulb.source === 'wand' ? 'wand' : 'scaffold'})</span></span>
+                            <span><b class="text-zinc-100">{menuBulb.label}</b><span class="text-zinc-600 ml-1">({menuBulb.origin === 'authored' ? 'original' : menuBulb.source === 'wand' ? 'wand' : 'scaffold'})</span></span>
                             <span class="text-zinc-600 text-[10px]">{menuBulb.w}×{menuBulb.h}px</span>
                           </div>
                           <button type="button" onclick={() => renameBulb(menuBulb.id)}
@@ -4505,10 +4526,17 @@
                             Re-flood at current tolerance ({genB2sWandTolerance})
                           </button>
                           <div class="border-t border-white/5 my-1"></div>
-                          <button type="button" onclick={() => discardBulb(menuBulb.id)}
-                                  class="block w-full text-left px-3 py-1.5 text-rose-300 hover:bg-rose-500/25 hover:text-rose-100 transition-colors">
-                            Discard (remove)
-                          </button>
+                          {#if menuBulb.origin === "authored" && !menuBulb.kept}
+                            <button type="button" onclick={() => restoreBulb(menuBulb.id)}
+                                    class="block w-full text-left px-3 py-1.5 text-emerald-300 hover:bg-emerald-500/25 hover:text-emerald-100 transition-colors">
+                              Restore original
+                            </button>
+                          {:else}
+                            <button type="button" onclick={() => discardBulb(menuBulb.id)}
+                                    class="block w-full text-left px-3 py-1.5 text-rose-300 hover:bg-rose-500/25 hover:text-rose-100 transition-colors">
+                              {menuBulb.origin === "authored" ? "Delete original (removed from saved file)" : "Discard (remove)"}
+                            </button>
+                          {/if}
                         </div>
                       {/if}
                     {/if}
