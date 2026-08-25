@@ -2764,6 +2764,10 @@
      *  applied to the saved lit-sprite alpha channel. 0 = hard edge.
      *  Inherits from the toolbar slider at creation time. */
     feather: number;
+    /** "authored" = came from the original .directb2s (artwork preserved,
+     *  never re-rendered by us; deleting removes the node in the merged
+     *  save). Absent = wand-added in this or a prior session. */
+    origin?: "authored";
     /** RGB color sampled from the composite under the mask (mean of all
      *  filled pixels). Used both for the on-screen preview tint and as
      *  the fill color of the saved .directb2s lit-sprite PNG. Falls
@@ -3391,7 +3395,7 @@
         try {
           genB2sStatus = `Reading authored .directb2s…`;
           const parsed = await parseScaffoldDoc(localPath);
-          imported = parsed.bulbs;
+          imported = parsed.bulbs.map(b => ({ ...b, origin: "authored" as const }));
           if (parsed.sourceW && parsed.sourceH) {
             sourceW = parsed.sourceW;
             sourceH = parsed.sourceH;
@@ -3417,7 +3421,7 @@
               label: b.name && b.name.length ? b.name : `L${b.romId || i + 1}`,
               x: Math.round(b.x), y: Math.round(b.y),
               w: Math.max(2, Math.round(b.width)), h: Math.max(2, Math.round(b.height)),
-              kept: true, source: "scaffold" as const, feather: 0,
+              kept: true, source: "scaffold" as const, feather: 0, origin: "authored" as const,
               color: [255, 200, 80] as [number, number, number],
             }));
             log("[b2s-editor]", `imported ${imported.length} lamps from the parsed b2scache (source ${sourceW}x${sourceH})`);
@@ -3835,14 +3839,18 @@
    *  table's default_video/ slot — paired with the _PP.mp4 + _PP.thumb.jpg.
    *  Writes to local cache mirror, marks dirty, pushes via SCP. */
   let genB2sSaveBusy = $state(false);
+  /** Editor toggle: show the authored (original) lamps as reference boxes. */
+  let genB2sShowOriginals = $state(true);
   async function saveGenB2s() {
     if (genB2sSaveBusy) return;
     const folder = selected?.folder;
     const tableId = selected?.id;
     if (!folder || tableId === undefined || tableId === null) return;
     const kept = genB2sBulbs.filter(b => b.kept && b.mask);
-    if (kept.length === 0) {
-      genB2sStatus = "No lamps to save — add some first";
+    const authoredAll = genB2sBulbs.filter(b => b.origin === "authored");
+    const authoredDeleted = authoredAll.filter(b => !b.kept);
+    if (kept.length === 0 && authoredDeleted.length === 0) {
+      genB2sStatus = "No changes to save — wand-add a lamp (or delete an original) first";
       return;
     }
     // Decide save target based on what's active. Video active → save as
@@ -3860,7 +3868,46 @@
     genB2sSaveBusy = true;
     try {
       genB2sStatus = `Building .directb2s for ${kept.length} lamp${kept.length === 1 ? '' : 's'}…`;
-      const xml = await buildDirectB2sXml(kept, folder, baseStem, isVideo ? "default_video" : "default_image");
+      let xml: string;
+      const authoredPath = !isVideo ? selected?.localDirectb2s : null;
+      const { readLocalText } = await import("$lib/api");
+      let authoredXml: string | null = null;
+      if (authoredPath && authoredAll.length > 0) {
+        try { authoredXml = await readLocalText(authoredPath); } catch { authoredXml = null; }
+      }
+      if (authoredXml && authoredXml.includes("</Illumination>")) {
+        // MERGE MODE: the original file (authored lamps + their PNG art,
+        // byte-preserved) + our wand lamps appended as real <Bulb> nodes
+        // tagged PPDoctor="1". Deleted originals have their node removed.
+        genB2sStatus = "Merging into the original .directb2s…";
+        let merged = authoredXml;
+        for (const del of authoredDeleted) {
+          const esc = del.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const re = new RegExp(`\\s*<Bulb\\b[^>]*\\bName="${esc}"[^>]*/>`, "");
+          const before = merged.length;
+          merged = merged.replace(re, "");
+          if (merged.length !== before) log("[b2s-editor]", `merged save: removed original lamp '${del.label}'`);
+        }
+        // Highest numeric RomID/B2SValue in the file so new ids don't collide.
+        let maxRom = 0;
+        for (const m of merged.matchAll(/<Bulb\b[^>]*\bRomID="(\d+)"/g)) maxRom = Math.max(maxRom, +m[1]);
+        let nodes = "";
+        let rid = Math.max(200, maxRom + 1);
+        for (const b of kept) {
+          if (b.origin === "authored" || !b.mask) continue;
+          const sprite = await renderLampSpritePng(b);
+          const spriteB64 = uint8ToBase64(sprite);
+          nodes += `    <Bulb PPDoctor="1" LocX="${b.x}" LocY="${b.y}" Width="${b.w}" Height="${b.h}" RomID="${rid}" Name="${b.label}" Image="${spriteB64}"/>
+`;
+          rid++;
+        }
+        merged = merged.replace("</Illumination>", nodes + "</Illumination>");
+        xml = merged;
+        log("[b2s-editor]", `merged save: ${authoredAll.length - authoredDeleted.length} originals kept, ${authoredDeleted.length} removed, ${(nodes.match(/<Bulb/g) ?? []).length} added`);
+      } else {
+        // No authored source available — legacy full build from the base.
+        xml = await buildDirectB2sXml(kept.filter(b => b.origin !== "authored"), folder, baseStem, isVideo ? "default_video" : "default_image");
+      }
       const { cacheWriteText, dbMarkDirty, syncPushDirty } = await import("$lib/api");
       genB2sStatus = `Writing ${(xml.length / 1024).toFixed(0)} KB to mirror…`;
       await cacheWriteText(sshHost(), folder, slot, filename, xml, cacheDir());
@@ -4249,6 +4296,11 @@
                                      hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed text-zinc-200"
                               aria-label="Zoom in">+</button>
                     </div>
+                    {#if genB2sBulbs.some(b => b.origin === "authored")}
+                      <button type="button" onclick={() => genB2sShowOriginals = !genB2sShowOriginals}
+                              class="text-[11px] px-2 py-1 rounded border transition-colors {genB2sShowOriginals ? 'bg-amber-400/15 text-amber-200 border-amber-400/40' : 'bg-white/5 text-zinc-400 border-white/10 hover:bg-white/10'}"
+                              title="Show/hide the table's original authored lamps — they are always preserved in the saved file unless you delete them">👁 Originals</button>
+                    {/if}
                     <button type="button" onclick={closeGenB2sEditor}
                             class="text-[11px] px-2 py-1 rounded bg-red-500/10 text-red-200 border border-red-500/30 hover:bg-red-500/20 transition-colors"
                             title="Exit the lamp editor (Esc) — unsaved wand lamps are kept in memory until you switch tables">✕ Close editor</button>
@@ -4317,6 +4369,9 @@
                       aria-label="Magic wand — left-click adds a lamp at the click point, right-click opens menu for a lamp under the cursor"
                     >
                       {#each genB2sBulbs as bulb, bulbIdx (bulb.id)}
+                        {#if bulb.origin === "authored" && !genB2sShowOriginals}
+                          <!-- originals hidden via the eye toggle -->
+                        {:else}
                         {#if genB2sPreviewAnim && showingVideo && bulb.mask}
                           <!-- VIDEO + preview-anim: render the SVG glow
                                overlay. The <video> element underneath has
@@ -4405,6 +4460,7 @@
                               {bulb.label}{#if bulb.feather > 0}<span class="opacity-60"> · f{bulb.feather}</span>{/if}
                             </span>
                           </div>
+                        {/if}
                         {/if}
                       {/each}
                     </div>
