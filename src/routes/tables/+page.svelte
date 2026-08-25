@@ -3074,6 +3074,10 @@
     // Walk in reverse so newer (top-rendered) lamps win on overlap.
     for (let i = genB2sBulbs.length - 1; i >= 0; i--) {
       const b = genB2sBulbs[i];
+      // Hidden originals (eye toggle off) and deleted ghosts are click-
+      // transparent — otherwise an authored lamp under the cursor blocks
+      // the wand from creating the user's own lamp on top of it.
+      if (b.origin === "authored" && (!genB2sShowOriginals || !b.kept)) continue;
       if (px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h) {
         return b;
       }
