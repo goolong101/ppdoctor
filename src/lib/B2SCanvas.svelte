@@ -372,6 +372,15 @@
   export function fxTrigger(key: string) { fxSim.trigger(key, performance.now()); }
   /** Source-pixel dimensions of the visible backglass (for centered placement). */
   export function fxSourceDims() { return { w: baseW, h: Math.max(1, baseH - grillH) }; }
+  /** The decoded base backglass image (bitmap) + its natural size — the wand
+   *  editor samples colors from it when no thumb exists anywhere (gitea-only
+   *  .directb2s tables). Null until the parse finishes. */
+  export function getBaseForEditor() {
+    if (!base) return null;
+    const w = (base as any).naturalWidth ?? (base as ImageBitmap).width;
+    const h = (base as any).naturalHeight ?? (base as ImageBitmap).height;
+    return { image: base, w, h };
+  }
   /** Authored bulbs (from the parsed .b2scache/.directb2s) in SOURCE px — lets
    *  the wand lamp editor start from the table's existing lamps when no local
    *  .directb2s / _PP sidecar is available. */

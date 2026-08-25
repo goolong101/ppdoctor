@@ -3428,6 +3428,31 @@
       // upscaled to source dims so the wand reads pixels at the same coord
       // space the bulb positions live in.
       if (!genB2sCompositePixels || genB2sCompositeW !== sourceW || genB2sCompositeH !== sourceH) {
+        // Best source: the preview's own decoded base image — always present
+        // when the b2s renders, works for gitea-only tables with nothing on
+        // the cabinet yet.
+        const baseImg = b2sCanvasRef?.getBaseForEditor?.() ?? null;
+        if (baseImg) {
+          const c0 = document.createElement("canvas");
+          c0.width = sourceW; c0.height = sourceH;
+          const cx0 = c0.getContext("2d", { willReadFrequently: true })!;
+          cx0.drawImage(baseImg.image as CanvasImageSource, 0, 0, sourceW, sourceH);
+          genB2sCompositePixels = cx0.getImageData(0, 0, sourceW, sourceH).data;
+          genB2sCompositeW = sourceW;
+          genB2sCompositeH = sourceH;
+          const stem0 = sanitizeFilenameStem(selected?.name ?? "backglass") + "_b2s";
+          const out0: Blob | null = await new Promise(r => c0.toBlob(r, "image/png"));
+          if (out0) {
+            const compBytes0 = new Uint8Array(await out0.arrayBuffer());
+            const { writeTempBytes } = await import("$lib/api");
+            const compositePath0 = await writeTempBytes(`${stem0}_composite.png`, compBytes0);
+            genB2sCompositePath = compositePath0;
+            genB2sOutputPath = compositePath0.replace(/_composite\.png$/, "_scaffold.directb2s");
+          }
+          log("[b2s-editor]", `composite from preview base bitmap (${baseImg.w}x${baseImg.h} -> ${sourceW}x${sourceH})`);
+        }
+      }
+      if (!genB2sCompositePixels || genB2sCompositeW !== sourceW || genB2sCompositeH !== sourceH) {
         const { cacheGetBinary, cacheWriteBinary, sshGetBase64 } = await import("$lib/api");
         let thumbBytes = await cacheGetBinary(sshHost(), folder, "default_image", "backglass.b2s_base.thumb.jpg", cacheDir());
         if (!thumbBytes || thumbBytes.length === 0) {
