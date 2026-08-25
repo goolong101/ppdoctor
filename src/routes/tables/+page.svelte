@@ -3407,10 +3407,25 @@
       // upscaled to source dims so the wand reads pixels at the same coord
       // space the bulb positions live in.
       if (!genB2sCompositePixels || genB2sCompositeW !== sourceW || genB2sCompositeH !== sourceH) {
-        const { cacheGetBinary } = await import("$lib/api");
-        const thumbBytes = await cacheGetBinary(sshHost(), folder, "default_image", "backglass.b2s_base.thumb.jpg", cacheDir());
+        const { cacheGetBinary, cacheWriteBinary, sshGetBase64 } = await import("$lib/api");
+        let thumbBytes = await cacheGetBinary(sshHost(), folder, "default_image", "backglass.b2s_base.thumb.jpg", cacheDir());
         if (!thumbBytes || thumbBytes.length === 0) {
-          dropError = "No B2S base thumb found in default_image — can't sample colors. Pull the table first.";
+          // Mirror doesn't have the thumb — fetch it straight from the cabinet
+          // (and cache it) so the wand editor works without a full table pull.
+          try {
+            genB2sStatus = "Fetching b2s base from the cabinet…";
+            const b64 = await sshGetBase64(sshHost(), `${PI_MEDIA}/${folder}/default_image/backglass.b2s_base.thumb.jpg`);
+            if (b64) {
+              const bin = atob(b64);
+              const arr = new Uint8Array(bin.length);
+              for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+              thumbBytes = arr;
+              void cacheWriteBinary(sshHost(), folder, "default_image", "backglass.b2s_base.thumb.jpg", arr, cacheDir());
+            }
+          } catch { /* fall through to the error below */ }
+        }
+        if (!thumbBytes || thumbBytes.length === 0) {
+          dropError = "No B2S base thumb found locally or on the cabinet — can't sample colors.";
           return;
         }
         const blob = new Blob([thumbBytes], { type: "image/jpeg" });
