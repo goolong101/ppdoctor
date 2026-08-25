@@ -372,6 +372,15 @@
   export function fxTrigger(key: string) { fxSim.trigger(key, performance.now()); }
   /** Source-pixel dimensions of the visible backglass (for centered placement). */
   export function fxSourceDims() { return { w: baseW, h: Math.max(1, baseH - grillH) }; }
+  /** Authored bulbs (from the parsed .b2scache/.directb2s) in SOURCE px — lets
+   *  the wand lamp editor start from the table's existing lamps when no local
+   *  .directb2s / _PP sidecar is available. */
+  export function getBulbsForEditor() {
+    return bulbs.map(b => ({
+      romId: b.romId, name: b.name,
+      x: b.cx - b.lw / 2, y: b.cy - b.lh / 2, width: b.lw, height: b.lh,
+    }));
+  }
   export function fxStats() { return fxSim.stats; }
 
   // Pause the rAF loop when the document is hidden (PP Doctor backgrounded

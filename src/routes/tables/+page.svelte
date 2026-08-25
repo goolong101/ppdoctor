@@ -3403,6 +3403,26 @@
         }
       }
 
+      // No gitea .directb2s? Start from the lamps the preview already parsed
+      // out of the .b2scache — so "edit existing lamps" works on any regular
+      // b2s table, exactly like the video flow.
+      if (!sameTableEditor && imported.length === 0 && b2sCanvasRef) {
+        try {
+          const cacheBulbs = b2sCanvasRef.getBulbsForEditor?.() ?? [];
+          if (cacheBulbs.length > 0) {
+            const dims = b2sCanvasRef.fxSourceDims?.();
+            if (dims && dims.w > 0) { sourceW = dims.w; sourceH = dims.h; }
+            imported = cacheBulbs.map((b: any, i: number) => ({
+              id: i + 1,
+              label: b.name && b.name.length ? b.name : `L${b.romId || i + 1}`,
+              x: Math.round(b.x), y: Math.round(b.y),
+              w: Math.max(2, Math.round(b.width)), h: Math.max(2, Math.round(b.height)),
+              kept: true, source: "scaffold" as const, feather: 0,
+            }));
+            log("[b2s-editor]", `imported ${imported.length} lamps from the parsed b2scache (source ${sourceW}x${sourceH})`);
+          }
+        } catch (e) { log("[b2s-editor]", `cache-bulb import skipped: ${e}`); }
+      }
       // Composite source for the default-b2s editor = the b2s base thumb,
       // upscaled to source dims so the wand reads pixels at the same coord
       // space the bulb positions live in.
