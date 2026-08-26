@@ -1030,6 +1030,26 @@ export const OVERLAY_LIBRARY: FxOverlayAsset[] = [
   { id: "kaleido", label: "Kaleido starburst", file: "fx/kaleido_sheet.png", staticUrl: "/fx/kaleido_sheet.png",
     frameW: 256, frameH: 256,
     json: { frames: { cols: 6, rows: 5, count: 30, fps: 12 }, blend: "add", alpha: 0.9 } },
+
+  { id: "fwburst", label: "Firework burst (purple, single)", file: "fx/fwburst_sheet.png", staticUrl: "/fx/fwburst_sheet.png",
+    frameW: 256, frameH: 256,
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 15 }, blend: "add", alpha: 1.0,
+            trigger: "MSG_JACKPOT", duration_ms: 2000, fade_ms: 200 } },
+  { id: "fwburst_gold", label: "Firework burst (gold, single)", file: "fx/fwburst_gold_sheet.png", staticUrl: "/fx/fwburst_gold_sheet.png",
+    frameW: 256, frameH: 256,
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 15 }, blend: "add", alpha: 1.0,
+            trigger: "MSG_JACKPOT", duration_ms: 2000, fade_ms: 200 } },
+  { id: "fwburst_multi", label: "Firework burst (multicolor, single)", file: "fx/fwburst_multi_sheet.png", staticUrl: "/fx/fwburst_multi_sheet.png",
+    frameW: 256, frameH: 256,
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 15 }, blend: "add", alpha: 1.0,
+            trigger: "MSG_JACKPOT", duration_ms: 2000, fade_ms: 200 } },
+  { id: "fwburst_stars", label: "Firework burst (cartoon stars, single)", file: "fx/fwburst_stars_sheet.png", staticUrl: "/fx/fwburst_stars_sheet.png",
+    frameW: 256, frameH: 256,
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 15 }, blend: "add", alpha: 1.0,
+            trigger: "MSG_JACKPOT", duration_ms: 2000, fade_ms: 200 } },
+  { id: "goldstar", label: "Golden starburst (loop)", file: "fx/goldstar_sheet.png", staticUrl: "/fx/goldstar_sheet.png",
+    frameW: 256, frameH: 256,
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 12 }, blend: "add", alpha: 0.95 } },
 ];
 
 /** Preset ids sorted by display label for the panel dropdown. */
