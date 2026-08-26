@@ -3022,6 +3022,22 @@
     const rect = target.getBoundingClientRect();
     const px = Math.round((e.clientX - rect.left) / rect.width  * genB2sCompositeW);
     const py = Math.round((e.clientY - rect.top)  / rect.height * genB2sCompositeH);
+    if (genB2sDrawMode === "poly") {
+      // Point mode: each click drops a vertex; clicking back on the FIRST
+      // point closes the shape into a lamp. Close radius scales with zoom
+      // (~10 screen px converted to composite px).
+      const pts = genB2sPolyPoints;
+      if (pts.length >= 3) {
+        const closePx = 10 / rect.width * genB2sCompositeW;
+        const dx = px - pts[0].x, dy = py - pts[0].y;
+        if (Math.sqrt(dx * dx + dy * dy) <= closePx) { finishPolyLamp(); return; }
+      }
+      genB2sPolyPoints = [...pts, { x: px, y: py }];
+      genB2sStatus = pts.length + 1 >= 3
+        ? `Points: ${pts.length + 1} — click the 1st point (○) to close, right-click to undo a point`
+        : `Points: ${pts.length + 1} — keep clicking the outline`;
+      return;
+    }
     // Hit-test first — left-click on a lamp is "select & edit", not
     // "wand-create a new overlapping lamp". Matches the user's mental
     // model: clicking a thing operates on it.
@@ -3069,6 +3085,62 @@
     genB2sStatus = `Wand: added ${`L${id}`} (${blob.pixelCount} px, feather ${genB2sFeather})`;
   }
 
+  /** Lamp-draw tool: "wand" = flood-fill at click; "poly" = click points
+   *  to outline any shape, click the FIRST point again to close it. */
+  let genB2sDrawMode = $state<"wand" | "poly">("wand");
+  /** In-progress polygon vertices, composite-pixel space. */
+  let genB2sPolyPoints = $state<{ x: number; y: number }[]>([]);
+
+  /** Scanline-rasterize a closed polygon into a bbox-local mask
+   *  (even-odd rule, sample at pixel centers). */
+  function polygonToMask(pts: { x: number; y: number }[], x0: number, y0: number, w: number, h: number): Uint8Array {
+    const mask = new Uint8Array(w * h);
+    for (let row = 0; row < h; row++) {
+      const yc = y0 + row + 0.5;
+      const xs: number[] = [];
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const yi = pts[i].y, yj = pts[j].y;
+        if ((yi <= yc && yj > yc) || (yj <= yc && yi > yc)) {
+          xs.push(pts[i].x + (yc - yi) / (yj - yi) * (pts[j].x - pts[i].x));
+        }
+      }
+      xs.sort((a, b) => a - b);
+      for (let k = 0; k + 1 < xs.length; k += 2) {
+        const a = Math.max(0, Math.ceil(xs[k] - x0 - 0.5));
+        const b = Math.min(w - 1, Math.floor(xs[k + 1] - x0 - 0.5));
+        for (let c = a; c <= b; c++) mask[row * w + c] = 1;
+      }
+    }
+    return mask;
+  }
+
+  /** Close the in-progress polygon into a real lamp. */
+  function finishPolyLamp() {
+    const pts = genB2sPolyPoints;
+    if (pts.length < 3) { genB2sStatus = "Need at least 3 points to close a shape"; return; }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of pts) {
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+    const x = Math.max(0, Math.floor(minX)), y = Math.max(0, Math.floor(minY));
+    const w = Math.max(1, Math.min(genB2sCompositeW - x, Math.ceil(maxX) - x));
+    const h = Math.max(1, Math.min(genB2sCompositeH - y, Math.ceil(maxY) - y));
+    const mask = polygonToMask(pts, x, y, w, h);
+    if (!mask.some(v => v)) { genB2sStatus = "Shape too thin — no pixels inside the outline"; return; }
+    const id = genB2sNextId++;
+    const color = genB2sCompositePixels
+      ? sampleLampColor(genB2sCompositePixels, genB2sCompositeW, genB2sCompositeH, x, y, mask, w, h)
+      : ([255, 191, 36] as [number, number, number]);
+    genB2sBulbs = [...genB2sBulbs, {
+      id, label: `L${id}`, x, y, w, h,
+      kept: true, source: "wand", mask,
+      feather: genB2sFeather, color,
+    }];
+    genB2sPolyPoints = [];
+    genB2sStatus = `Points: added L${id} (${pts.length} points, feather ${genB2sFeather})`;
+  }
+
   /** Hit-test: which bulb (if any) contains the given composite coord? */
   function hitTestBulbAt(px: number, py: number): GenBulb | null {
     // Walk in reverse so newer (top-rendered) lamps win on overlap.
@@ -3089,6 +3161,13 @@
    *  cursor (if any). Right-clicking empty space is a no-op. */
   function onOverlayContextMenu(e: MouseEvent) {
     e.preventDefault();
+    if (genB2sDrawMode === "poly" && genB2sPolyPoints.length > 0) {
+      genB2sPolyPoints = genB2sPolyPoints.slice(0, -1);
+      genB2sStatus = genB2sPolyPoints.length > 0
+        ? `Points: ${genB2sPolyPoints.length} — right-click removes the last point`
+        : "Points cleared — click to start an outline";
+      return;
+    }
     const target = e.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
     const px = (e.clientX - rect.left) / rect.width  * genB2sCompositeW;
@@ -4032,7 +4111,15 @@
   }
 
   $effect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && genB2sActive) closeGenB2sEditor(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !genB2sActive) return;
+      if (genB2sDrawMode === "poly" && genB2sPolyPoints.length > 0) {
+        genB2sPolyPoints = [];
+        genB2sStatus = "Polygon cancelled";
+        return;
+      }
+      closeGenB2sEditor();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
@@ -4384,6 +4471,27 @@
                       tabindex={0}
                       aria-label="Magic wand — left-click adds a lamp at the click point, right-click opens menu for a lamp under the cursor"
                     >
+                      {#if genB2sDrawMode === "poly" && genB2sPolyPoints.length > 0}
+                        <!-- In-progress outline: polyline + vertex dots; the
+                             FIRST point is a bigger open ring = close target. -->
+                        <svg class="absolute inset-0 w-full h-full pointer-events-none"
+                             viewBox="0 0 {genB2sCompositeW} {genB2sCompositeH}"
+                             preserveAspectRatio="none">
+                          <polyline
+                            points={genB2sPolyPoints.map(p => `${p.x},${p.y}`).join(" ")}
+                            fill={genB2sPolyPoints.length >= 3 ? "rgba(56,189,248,0.15)" : "none"}
+                            stroke="rgb(56,189,248)" stroke-width={genB2sCompositeW / 640}
+                            stroke-dasharray="{genB2sCompositeW / 240} {genB2sCompositeW / 480}" />
+                          {#each genB2sPolyPoints as p, pi}
+                            {#if pi === 0}
+                              <circle cx={p.x} cy={p.y} r={genB2sCompositeW / 130}
+                                      fill="none" stroke="rgb(125,211,252)" stroke-width={genB2sCompositeW / 480} />
+                            {:else}
+                              <circle cx={p.x} cy={p.y} r={genB2sCompositeW / 320} fill="rgb(56,189,248)" />
+                            {/if}
+                          {/each}
+                        </svg>
+                      {/if}
                       {#each genB2sBulbs as bulb, bulbIdx (bulb.id)}
                         {#if bulb.origin === "authored" && !bulb.kept}
                           <!-- deleted original: ghost until saved (right-click to restore) -->
@@ -5069,6 +5177,15 @@
                   <span class="text-amber-300 font-medium">
                     {genB2sBulbs.filter(b => b.kept).length}/{genB2sBulbs.length} lamps
                   </span>
+                  <div class="flex items-center rounded overflow-hidden border border-white/10"
+                       title="Lamp draw tool: Wand flood-fills at the click; Points lets you click out any outline (triangle, star, …) — click the first point again to close it">
+                    <button type="button"
+                            onclick={() => { genB2sDrawMode = "wand"; genB2sPolyPoints = []; }}
+                            class="text-[11px] px-2 py-1 transition-colors {genB2sDrawMode === 'wand' ? 'bg-amber-400/25 text-amber-100' : 'bg-white/5 text-zinc-400 hover:bg-white/10'}">✦ Wand</button>
+                    <button type="button"
+                            onclick={() => { genB2sDrawMode = "poly"; genB2sPolyPoints = []; genB2sStatus = "Points mode — click the outline corners, click the 1st point again to close"; }}
+                            class="text-[11px] px-2 py-1 transition-colors {genB2sDrawMode === 'poly' ? 'bg-sky-400/25 text-sky-100' : 'bg-white/5 text-zinc-400 hover:bg-white/10'}">△ Points</button>
+                  </div>
                   <button
                     type="button"
                     onclick={() => (genB2sPreviewAnim = !genB2sPreviewAnim)}
