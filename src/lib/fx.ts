@@ -33,6 +33,8 @@ export interface FxEmitterJson {
   /** Wait this long after the event before firing (sequencing). */
   delay_ms?: number;
   trigger?: string | string[];
+  /** Event(s) that END the effect — run until this fires (10 min cap). */
+  until?: string | string[];
   wrap?: boolean;
   life_s?: number | [number, number];
   speed?: number | [number, number];
@@ -84,6 +86,8 @@ export interface FxOverlayJson {
    *  `random: true` = one random frame per show/strike (lightning designs). */
   frames?: { cols?: number; rows?: number; count?: number; fps?: number; random?: boolean };
   trigger?: string | string[];
+  /** Event(s) that END the overlay — e.g. show till MSG_MULTIBALL_END. */
+  until?: string | string[];
   duration_ms?: number;
   fade_ms?: number;
   delay_ms?: number;
@@ -164,7 +168,7 @@ const PRESETS: Record<string, PresetRow> = {
  *  C++ load order: preset first, then every explicit field overrides. */
 export interface FxResolved {
   name: string; preset: string; slot: FxSlot; sprite: number; blend: "add" | "blend"; spawnMode: number;
-  maxN: number; rate: number; burst: number; durationMs: number; delayMs: number; idle: boolean; triggers: string[];
+  maxN: number; rate: number; burst: number; durationMs: number; delayMs: number; idle: boolean; triggers: string[]; until: string[];
   wrap: boolean; lifeMin: number; lifeMax: number; speedMin: number; speedMax: number;
   angle: number; spread: number; gravity: number; drag: number; windX: number; windY: number; wander: number;
   sizeMin: number; sizeMax: number; grow: number; aspect: number; align: boolean; rotMin: number; rotMax: number;
@@ -216,6 +220,11 @@ function triggersOf(t: FxEmitterJson["trigger"], idleDefault: boolean): { trigge
   return { triggers: named, idle: hasIdle ? true : (named.length ? false : idleDefault) };
 }
 
+function untilOf(u: string | string[] | undefined): string[] {
+  if (u === undefined) return [];
+  return (typeof u === "string" ? [u] : Array.isArray(u) ? u : []).filter(x => typeof x === "string" && x.length > 0);
+}
+
 /** Resolve preset + overrides to SOURCE units (no scaling). */
 export function resolveEmitter(j: FxEmitterJson): FxResolved {
   const p = PRESETS[j.preset ?? ""] ?? null;
@@ -223,7 +232,7 @@ export function resolveEmitter(j: FxEmitterJson): FxResolved {
     name: j.name ?? "emitter", preset: j.preset ?? "",
     slot: slotFromName(p?.z, 1), sprite: spriteFromName(p?.sprite), blend: (p?.blend === "add" ? "add" : p ? "blend" : "add"),
     spawnMode: spawnFromName(p?.spawn, 0),
-    maxN: p?.maxN ?? 100, rate: p?.rate ?? 0, burst: 0, durationMs: 0, delayMs: 0, idle: true, triggers: [],
+    maxN: p?.maxN ?? 100, rate: p?.rate ?? 0, burst: 0, durationMs: 0, delayMs: 0, idle: true, triggers: [], until: [],
     wrap: p?.wrap ?? false, lifeMin: p?.lifeMin ?? 1, lifeMax: p?.lifeMax ?? 2,
     speedMin: p?.speedMin ?? 0, speedMax: p?.speedMax ?? 0, angle: p?.angle ?? 270, spread: p?.spread ?? 0,
     gravity: p?.gravity ?? 0, drag: p?.drag ?? 1, windX: 0, windY: 0, wander: p?.wander ?? 0,
@@ -276,6 +285,7 @@ export function resolveEmitter(j: FxEmitterJson): FxResolved {
   if (Array.isArray(j.point) && j.point.length >= 2) { r.point = [+j.point[0], +j.point[1]]; if (j.spawn === undefined) r.spawnMode = 5; }
   if (Array.isArray(j.clip) && j.clip.length >= 4) r.clip = [+j.clip[0], +j.clip[1], +j.clip[2], +j.clip[3]];
   const t = triggersOf(j.trigger, true); r.triggers = t.triggers; r.idle = t.idle;
+  r.until = untilOf(j.until);
   if (r.lifeMin <= 0 && r.lifeMax <= 0) { r.lifeMin = r.lifeMax = 0; }
   return r;
 }
@@ -306,7 +316,7 @@ interface Overlay {
   warp: number; warpAmp: number; warpPeriod: number; warpFreq: number; cols: number; rows: number;
   frameCols: number; frameRows: number; frameCount: number; frameFps: number; framePhase: number;
   frameRandom: boolean; curFrame: number;
-  idle: boolean; triggers: string[]; durationMs: number; fadeMs: number; delayMs: number;
+  idle: boolean; triggers: string[]; until: string[]; durationMs: number; fadeMs: number; delayMs: number;
   pendingAt: number;
   activeUntil: number; activeSince: number; offX: number; offY: number; lastMs: number;
 }
@@ -523,7 +533,7 @@ export class FxSim {
         frameCols: Math.max(1, Math.trunc(j.frames?.cols ?? 1)), frameRows: Math.max(1, Math.trunc(j.frames?.rows ?? 1)),
         frameCount: 1, frameFps: Math.max(0, j.frames?.fps ?? 12), framePhase: 0,
         frameRandom: !!j.frames?.random, curFrame: 0,
-        idle: true, triggers: [], durationMs: Math.max(0, Math.trunc(j.duration_ms ?? 0)),
+        idle: true, triggers: [], until: untilOf(j.until), durationMs: Math.max(0, Math.trunc(j.duration_ms ?? 0)),
         fadeMs: Math.max(0, Math.trunc(j.fade_ms ?? 300)),
         delayMs: Math.max(0, Math.trunc(j.delay_ms ?? 0)), pendingAt: 0,
         activeUntil: 0, activeSince: 0, offX: 0, offY: 0, lastMs: 0,
@@ -606,17 +616,30 @@ export class FxSim {
   }
 
   trigger(key: string, now: number) {
+    // END pass first — an event in `until` stops the effect (fade for
+    // overlays, emission cut for emitters; live particles decay naturally).
+    for (const e of this.emitters) {
+      if (!e.r.until.includes(key)) continue;
+      e.pendingAt = 0;
+      if (e.activeUntil !== 0 && e.activeUntil > now) e.activeUntil = now;
+    }
+    for (const o of this.overlays) {
+      if (!o.until.includes(key)) continue;
+      o.pendingAt = 0;
+      if (o.activeUntil !== 0 && o.activeUntil > now + o.fadeMs) o.activeUntil = now + o.fadeMs;
+    }
     for (const e of this.emitters) {
       if (!e.r.triggers.includes(key)) continue;
       if (e.r.delayMs > 0) { e.pendingAt = now + e.r.delayMs; continue; }
       for (let i = 0; i < e.r.burst; i++) this.spawnOne(e);
       if (e.r.durationMs > 0) e.activeUntil = now + e.r.durationMs;
+      else if (e.r.until.length) e.activeUntil = now + 600000;
     }
     for (const o of this.overlays) {
       if (!o.triggers.includes(key)) continue;
       if (o.delayMs > 0) { o.pendingAt = now + o.delayMs; continue; }
       if (o.frameRandom && o.frameCount > 1) o.curFrame = Math.trunc(frand() * o.frameCount) % o.frameCount;
-      o.activeSince = now; o.activeUntil = now + (o.durationMs > 0 ? o.durationMs : 2000);
+      o.activeSince = now; o.activeUntil = now + (o.durationMs > 0 ? o.durationMs : o.until.length ? 600000 : 2000);
     }
   }
 
@@ -670,6 +693,7 @@ export class FxSim {
       e.pendingAt = 0;
       for (let i = 0; i < r.burst; i++) this.spawnOne(e);
       if (r.durationMs > 0) e.activeUntil = now + r.durationMs;
+      else if (r.until.length) e.activeUntil = now + 600000;
     }
     const emitting = r.idle || (e.activeUntil !== 0 && now !== 0 && now < e.activeUntil);
     if (emitting && r.rate > 0) {
@@ -752,7 +776,7 @@ export class FxSim {
     if (o.pendingAt !== 0 && now >= o.pendingAt) {
       o.pendingAt = 0;
       if (o.frameRandom && o.frameCount > 1) o.curFrame = Math.trunc(frand() * o.frameCount) % o.frameCount;
-      o.activeSince = now; o.activeUntil = now + (o.durationMs > 0 ? o.durationMs : 2000);
+      o.activeSince = now; o.activeUntil = now + (o.durationMs > 0 ? o.durationMs : o.until.length ? 600000 : 2000);
     }
     let vis = 1;
     if (!o.idle) {

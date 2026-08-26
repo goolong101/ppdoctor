@@ -4801,7 +4801,7 @@
                   </div>
                   {#if b2sPanelTab === "layers"}
                     <FxPanel bind:doc={fxCurrent} bind:selected={fxSelected} bind:editArea={fxEditArea} bind:overlaySelected={fxOverlaySel} bind:glowSelected={fxGlowSel}
-                             onTest={(k) => b2sCanvasRef?.fxTrigger(k)}
+                             onTest={(k) => (b2sCanvasRef ?? fxVideoRef)?.fxTrigger(k)}
                              onAddOverlayAsset={fxInstallOverlayAsset}
                              liveStats={() => b2sCanvasRef?.fxStats() ?? { live: 0, emitters: 0, overlays: 0 }} />
                     <div class="glass rounded-xl p-3 w-72 flex flex-col gap-1.5">
@@ -4972,7 +4972,7 @@
                   </div>
                   {#if b2sPanelTab === "layers"}
                     <FxPanel bind:doc={fxCurrent} bind:selected={fxSelected} bind:editArea={fxEditArea} bind:overlaySelected={fxOverlaySel} bind:glowSelected={fxGlowSel}
-                             onTest={(k) => fxVideoRef?.fxTrigger(k)}
+                             onTest={(k) => (fxVideoRef ?? b2sCanvasRef)?.fxTrigger(k)}
                              onAddOverlayAsset={fxInstallOverlayAsset}
                              liveStats={() => fxVideoRef?.fxStats() ?? { live: 0, emitters: 0, overlays: 0 }} />
                     <div class="glass rounded-xl p-3 w-72 flex flex-col gap-1.5">

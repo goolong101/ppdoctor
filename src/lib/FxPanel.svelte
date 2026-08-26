@@ -120,7 +120,7 @@
   let triggerSel = $derived(cur ? (typeof cur.trigger === "string" ? cur.trigger : Array.isArray(cur.trigger) && cur.trigger.length ? cur.trigger[0] : "idle") : "idle");
   function setTrigger(v: string) {
     if (!cur) return;
-    if (v === "idle") { delete cur.trigger; delete cur.burst; delete cur.duration_ms; }
+    if (v === "idle") { delete cur.trigger; delete cur.burst; delete cur.duration_ms; delete cur.until; }
     else { cur.trigger = v; if (cur.burst === undefined && cur.duration_ms === undefined) cur.burst = 60; }
   }
 
@@ -345,6 +345,25 @@
             <div class="flex items-baseline justify-between"><label class="text-[10px] text-zinc-400" for="fx-delay">Delay after event</label><span class="text-[10px] font-mono text-zinc-500">{cur.delay_ms ?? 0} ms</span></div>
             <input id="fx-delay" type="range" min="0" max="5000" step="50" value={cur.delay_ms ?? 0}
                    oninput={(e) => { const v = +(e.currentTarget as HTMLInputElement).value; if (v > 0) cur!.delay_ms = v; else delete cur!.delay_ms; }} class="w-full accent-amber-400" />
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[10px] text-zinc-400" for="fx-until"
+                     title="Keep emitting until this event fires (e.g. fire from Multiball till Multiball end). 10-minute safety cap.">Until (ends on)</label>
+              <select id="fx-until" value={typeof cur.until === "string" ? cur.until : "none"}
+                      onchange={(e) => { const v = (e.currentTarget as HTMLSelectElement).value; if (v === "none") delete cur!.until; else cur!.until = v; }}
+                      class="w-full text-xs bg-black/30 border border-white/10 rounded px-2 py-1 text-zinc-200">
+                <option value="none">— window only</option>
+                {#each EVENTS as ev}<option value={ev}>{ev.replace("MSG_", "till ")}</option>{/each}
+              </select>
+            </div>
+            {#if typeof cur.until === "string"}
+              <div class="flex items-end">
+                <button type="button" onclick={() => onTest?.(cur!.until as string)}
+                        class="w-full text-[11px] px-2 py-1 rounded bg-white/5 text-zinc-200 border border-white/10 hover:bg-white/10"
+                        title="Fire the ending event in the preview — emission should stop">■ Test end</button>
+              </div>
+            {/if}
           </div>
           <button type="button" onclick={() => onTest?.(triggerSel)}
                   class="text-[11px] px-2 py-1 rounded bg-white/5 text-zinc-200 border border-white/10 hover:bg-white/10">▶ Test {triggerSel.replace("MSG_", "")}</button>
@@ -573,7 +592,7 @@
           <div>
             <label class="text-[10px] text-zinc-400" for="ov-runs">Runs</label>
             <select id="ov-runs" value={typeof ocur.trigger === "string" ? ocur.trigger : "idle"}
-                    onchange={(e) => { const v = (e.currentTarget as HTMLSelectElement).value; if (v === "idle") { delete ocur!.trigger; delete ocur!.duration_ms; delete ocur!.delay_ms; } else { ocur!.trigger = v; if (ocur!.duration_ms === undefined) ocur!.duration_ms = 3000; } }}
+                    onchange={(e) => { const v = (e.currentTarget as HTMLSelectElement).value; if (v === "idle") { delete ocur!.trigger; delete ocur!.duration_ms; delete ocur!.delay_ms; delete ocur!.until; } else { ocur!.trigger = v; if (ocur!.duration_ms === undefined) ocur!.duration_ms = 3000; } }}
                     class="w-full text-xs bg-black/30 border border-white/10 rounded px-2 py-1 text-zinc-200">
               <option value="idle">Always (idle)</option>
               {#each EVENTS as ev}<option value={ev}>{ev.replace("MSG_", "on ")}</option>{/each}
@@ -590,6 +609,25 @@
           <div class="grid grid-cols-2 gap-1">
             {@render num("show for ms", ocur, "duration_ms", 100, 30000, 100)}
             {@render num("delay ms", ocur, "delay_ms", 0, 5000, 50)}
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[10px] text-zinc-400" for="ov-until"
+                     title="Keep showing until this event fires (e.g. flame from Multiball till Multiball end). Overrides 'show for ms'; 10-minute safety cap.">Until (ends on)</label>
+              <select id="ov-until" value={typeof ocur.until === "string" ? ocur.until : "none"}
+                      onchange={(e) => { const v = (e.currentTarget as HTMLSelectElement).value; if (v === "none") delete ocur!.until; else { ocur!.until = v; delete ocur!.duration_ms; } }}
+                      class="w-full text-xs bg-black/30 border border-white/10 rounded px-2 py-1 text-zinc-200">
+                <option value="none">— timed (show for ms)</option>
+                {#each EVENTS as ev}<option value={ev}>{ev.replace("MSG_", "till ")}</option>{/each}
+              </select>
+            </div>
+            {#if typeof ocur.until === "string"}
+              <div class="flex items-end">
+                <button type="button" onclick={() => onTest?.(ocur!.until as string)}
+                        class="w-full text-[11px] px-2 py-1 rounded bg-white/5 text-zinc-200 border border-white/10 hover:bg-white/10"
+                        title="Fire the ending event in the preview — the overlay should fade out">■ Test end</button>
+              </div>
+            {/if}
           </div>
         {/if}
         <div class="grid grid-cols-4 gap-1">
