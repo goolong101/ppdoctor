@@ -1050,6 +1050,22 @@ export const OVERLAY_LIBRARY: FxOverlayAsset[] = [
   { id: "goldstar", label: "Golden starburst (loop)", file: "fx/goldstar_sheet.png", staticUrl: "/fx/goldstar_sheet.png",
     frameW: 256, frameH: 256,
     json: { frames: { cols: 6, rows: 5, count: 30, fps: 12 }, blend: "add", alpha: 0.95 } },
+
+  { id: "pinballs", label: "Pinballs bouncing (multiball)", file: "fx/pinballs_sheet.png", staticUrl: "/fx/pinballs_sheet.png",
+    frameW: 320, frameH: 180,
+    // Chrome balls ricochet while multiball runs — showcases trigger+until.
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 15 }, blend: "add", alpha: 0.9,
+            trigger: "MSG_MULTIBALL", until: "MSG_MULTIBALL_END", fade_ms: 400 } },
+
+  { id: "coinrain", label: "Coins raining (jackpot)", file: "fx/coinrain_sheet.png", staticUrl: "/fx/coinrain_sheet.png",
+    frameW: 320, frameH: 180,
+    // Seamless periodic loop — shown for 4s on jackpot by default.
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 15 }, blend: "add", alpha: 0.95,
+            trigger: "MSG_JACKPOT", duration_ms: 4000, fade_ms: 400 } },
+  { id: "jewelrain", label: "Jewels raining (riches)", file: "fx/jewelrain_sheet.png", staticUrl: "/fx/jewelrain_sheet.png",
+    frameW: 320, frameH: 107,
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 12 }, blend: "add", alpha: 0.95,
+            trigger: "MSG_JACKPOT", duration_ms: 4000, fade_ms: 400 } },
 ];
 
 /** Preset ids sorted by display label for the panel dropdown. */
