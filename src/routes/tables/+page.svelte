@@ -3030,11 +3030,18 @@
       if (pts.length >= 3) {
         const closePx = 10 / rect.width * genB2sCompositeW;
         const dx = px - pts[0].x, dy = py - pts[0].y;
-        if (Math.sqrt(dx * dx + dy * dy) <= closePx) { finishPolyLamp(); return; }
+        if (Math.sqrt(dx * dx + dy * dy) <= closePx) {
+          // Loop closed — hold it and keep drawing: another loop INSIDE
+          // becomes a hole (even-odd), outside becomes a second island.
+          genB2sPolyLoops = [...genB2sPolyLoops, pts];
+          genB2sPolyPoints = [];
+          genB2sStatus = `Loop ${genB2sPolyLoops.length} closed — draw a loop inside it for a HOLE, or press Enter / ✓ Done to create the lamp`;
+          return;
+        }
       }
       genB2sPolyPoints = [...pts, { x: px, y: py }];
       genB2sStatus = pts.length + 1 >= 3
-        ? `Points: ${pts.length + 1} — click the 1st point (○) to close, right-click to undo a point`
+        ? `Points: ${pts.length + 1} — click the 1st point (○) to close this loop, right-click to undo a point`
         : `Points: ${pts.length + 1} — keep clicking the outline`;
       return;
     }
@@ -3090,18 +3097,38 @@
   let genB2sDrawMode = $state<"wand" | "poly">("wand");
   /** In-progress polygon vertices, composite-pixel space. */
   let genB2sPolyPoints = $state<{ x: number; y: number }[]>([]);
+  /** Closed loops waiting to be finalized into ONE lamp. Even-odd fill:
+   *  a loop inside another = a HOLE; a loop outside = a second island. */
+  let genB2sPolyLoops = $state<{ x: number; y: number }[][]>([]);
+  /** When set, finished loops are SUBTRACTED from this lamp's mask
+   *  ("✂ Cut hole" from the lamp menu) instead of creating a new lamp. */
+  let genB2sPolyTarget = $state<number | null>(null);
 
-  /** Scanline-rasterize a closed polygon into a bbox-local mask
-   *  (even-odd rule, sample at pixel centers). */
-  function polygonToMask(pts: { x: number; y: number }[], x0: number, y0: number, w: number, h: number): Uint8Array {
+  /** Lamp menu → draw a points outline that gets cut out of the lamp. */
+  function startCutHole(id: number) {
+    const b = genB2sBulbs.find(x => x.id === id);
+    if (!b?.mask) return;
+    genB2sDrawMode = "poly";
+    genB2sPolyPoints = []; genB2sPolyLoops = [];
+    genB2sPolyTarget = id;
+    closeBulbMenu();
+    genB2sStatus = `Cut hole in ${b.label} — click the hole's outline, click the 1st point to close, Enter / ✓ Done to cut`;
+  }
+
+  /** Scanline-rasterize closed polygon loop(s) into a bbox-local mask.
+   *  Even-odd rule over ALL loops' edges, sampled at pixel centers — a loop
+   *  drawn inside another cancels it out (a hole), disjoint loops union. */
+  function polygonToMask(loops: { x: number; y: number }[][], x0: number, y0: number, w: number, h: number): Uint8Array {
     const mask = new Uint8Array(w * h);
     for (let row = 0; row < h; row++) {
       const yc = y0 + row + 0.5;
       const xs: number[] = [];
-      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-        const yi = pts[i].y, yj = pts[j].y;
-        if ((yi <= yc && yj > yc) || (yj <= yc && yi > yc)) {
-          xs.push(pts[i].x + (yc - yi) / (yj - yi) * (pts[j].x - pts[i].x));
+      for (const pts of loops) {
+        for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+          const yi = pts[i].y, yj = pts[j].y;
+          if ((yi <= yc && yj > yc) || (yj <= yc && yi > yc)) {
+            xs.push(pts[i].x + (yc - yi) / (yj - yi) * (pts[j].x - pts[i].x));
+          }
         }
       }
       xs.sort((a, b) => a - b);
@@ -3114,19 +3141,37 @@
     return mask;
   }
 
-  /** Close the in-progress polygon into a real lamp. */
+  /** Finalize ALL drawn loops (outer shapes + holes) into ONE lamp. */
   function finishPolyLamp() {
-    const pts = genB2sPolyPoints;
-    if (pts.length < 3) { genB2sStatus = "Need at least 3 points to close a shape"; return; }
+    const loops = [...genB2sPolyLoops];
+    if (genB2sPolyPoints.length >= 3) loops.push(genB2sPolyPoints);
+    if (loops.length === 0) { genB2sStatus = "Need at least 3 points to close a shape"; return; }
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const p of pts) {
+    for (const pts of loops) for (const p of pts) {
       if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
       if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+    if (genB2sPolyTarget !== null) {
+      // ✂ Cut mode: rasterize the loops in the TARGET lamp's bbox space and
+      // clear those pixels from its mask. The lamp keeps its bbox/feather.
+      const t = genB2sBulbs.find(b => b.id === genB2sPolyTarget);
+      genB2sPolyTarget = null;
+      genB2sPolyPoints = []; genB2sPolyLoops = [];
+      if (!t?.mask) { genB2sStatus = "Cut target lamp is gone"; return; }
+      const hole = polygonToMask(loops, t.x, t.y, t.w, t.h);
+      const m = new Uint8Array(t.mask);
+      let cut = 0;
+      for (let i = 0; i < m.length; i++) if (hole[i] && m[i]) { m[i] = 0; cut++; }
+      if (cut === 0) { genB2sStatus = `Hole outline doesn't overlap ${t.label} — nothing cut`; return; }
+      if (!m.some(v => v)) { genB2sStatus = `That would erase ${t.label} entirely — use Discard instead`; return; }
+      genB2sBulbs = genB2sBulbs.map(b => b.id === t.id ? { ...b, mask: m } : b);
+      genB2sStatus = `✂ Cut ${cut} px out of ${t.label}`;
+      return;
     }
     const x = Math.max(0, Math.floor(minX)), y = Math.max(0, Math.floor(minY));
     const w = Math.max(1, Math.min(genB2sCompositeW - x, Math.ceil(maxX) - x));
     const h = Math.max(1, Math.min(genB2sCompositeH - y, Math.ceil(maxY) - y));
-    const mask = polygonToMask(pts, x, y, w, h);
+    const mask = polygonToMask(loops, x, y, w, h);
     if (!mask.some(v => v)) { genB2sStatus = "Shape too thin — no pixels inside the outline"; return; }
     const id = genB2sNextId++;
     const color = genB2sCompositePixels
@@ -3138,7 +3183,8 @@
       feather: genB2sFeather, color,
     }];
     genB2sPolyPoints = [];
-    genB2sStatus = `Points: added L${id} (${pts.length} points, feather ${genB2sFeather})`;
+    genB2sPolyLoops = [];
+    genB2sStatus = `Points: added L${id} (${loops.length} loop${loops.length === 1 ? '' : 's'}, feather ${genB2sFeather})`;
   }
 
   /** Hit-test: which bulb (if any) contains the given composite coord? */
@@ -3161,11 +3207,18 @@
    *  cursor (if any). Right-clicking empty space is a no-op. */
   function onOverlayContextMenu(e: MouseEvent) {
     e.preventDefault();
-    if (genB2sDrawMode === "poly" && genB2sPolyPoints.length > 0) {
-      genB2sPolyPoints = genB2sPolyPoints.slice(0, -1);
-      genB2sStatus = genB2sPolyPoints.length > 0
-        ? `Points: ${genB2sPolyPoints.length} — right-click removes the last point`
-        : "Points cleared — click to start an outline";
+    if (genB2sDrawMode === "poly" && (genB2sPolyPoints.length > 0 || genB2sPolyLoops.length > 0)) {
+      if (genB2sPolyPoints.length > 0) {
+        genB2sPolyPoints = genB2sPolyPoints.slice(0, -1);
+        genB2sStatus = genB2sPolyPoints.length > 0
+          ? `Points: ${genB2sPolyPoints.length} — right-click removes the last point`
+          : "Points cleared — click to start an outline";
+      } else {
+        // No open points — reopen the last closed loop for editing.
+        genB2sPolyPoints = genB2sPolyLoops[genB2sPolyLoops.length - 1];
+        genB2sPolyLoops = genB2sPolyLoops.slice(0, -1);
+        genB2sStatus = `Reopened loop ${genB2sPolyLoops.length + 1} (${genB2sPolyPoints.length} points) — right-click removes points`;
+      }
       return;
     }
     const target = e.currentTarget as HTMLElement;
@@ -4112,10 +4165,25 @@
 
   $effect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || !genB2sActive) return;
+      if (!genB2sActive) return;
+      if (e.key === "Enter" && genB2sDrawMode === "poly" && (genB2sPolyLoops.length > 0 || genB2sPolyPoints.length >= 3)) {
+        finishPolyLamp();
+        return;
+      }
+      if (e.key !== "Escape") return;
       if (genB2sDrawMode === "poly" && genB2sPolyPoints.length > 0) {
         genB2sPolyPoints = [];
-        genB2sStatus = "Polygon cancelled";
+        genB2sStatus = genB2sPolyLoops.length > 0 ? "Open loop cancelled — closed loops kept (Esc again clears them)" : "Polygon cancelled";
+        return;
+      }
+      if (genB2sDrawMode === "poly" && genB2sPolyLoops.length > 0) {
+        genB2sPolyLoops = [];
+        genB2sStatus = "All loops cancelled";
+        return;
+      }
+      if (genB2sDrawMode === "poly" && genB2sPolyTarget !== null) {
+        genB2sPolyTarget = null;
+        genB2sStatus = "Cut-hole cancelled";
         return;
       }
       closeGenB2sEditor();
@@ -4471,17 +4539,26 @@
                       tabindex={0}
                       aria-label="Magic wand — left-click adds a lamp at the click point, right-click opens menu for a lamp under the cursor"
                     >
-                      {#if genB2sDrawMode === "poly" && genB2sPolyPoints.length > 0}
+                      {#if genB2sDrawMode === "poly" && (genB2sPolyPoints.length > 0 || genB2sPolyLoops.length > 0)}
                         <!-- In-progress outline: polyline + vertex dots; the
                              FIRST point is a bigger open ring = close target. -->
                         <svg class="absolute inset-0 w-full h-full pointer-events-none"
                              viewBox="0 0 {genB2sCompositeW} {genB2sCompositeH}"
                              preserveAspectRatio="none">
+                          {#if genB2sPolyLoops.length > 0}
+                            <!-- Closed loops preview — even-odd fill shows holes live. -->
+                            <path
+                              d={genB2sPolyLoops.map(l => "M" + l.map(p => `${p.x} ${p.y}`).join(" L ") + " Z").join(" ")}
+                              fill="rgba(56,189,248,0.20)" fill-rule="evenodd"
+                              stroke="rgb(56,189,248)" stroke-width={genB2sCompositeW / 640} />
+                          {/if}
+                          {#if genB2sPolyPoints.length > 0}
                           <polyline
                             points={genB2sPolyPoints.map(p => `${p.x},${p.y}`).join(" ")}
                             fill={genB2sPolyPoints.length >= 3 ? "rgba(56,189,248,0.15)" : "none"}
                             stroke="rgb(56,189,248)" stroke-width={genB2sCompositeW / 640}
                             stroke-dasharray="{genB2sCompositeW / 240} {genB2sCompositeW / 480}" />
+                          {/if}
                           {#each genB2sPolyPoints as p, pi}
                             {#if pi === 0}
                               <circle cx={p.x} cy={p.y} r={genB2sCompositeW / 130}
@@ -4637,6 +4714,13 @@
                                   class="block w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-sky-500/15 hover:text-sky-200 transition-colors">
                             Re-flood at current tolerance ({genB2sWandTolerance})
                           </button>
+                          {#if menuBulb.origin !== "authored" && menuBulb.mask}
+                            <button type="button" onclick={() => startCutHole(menuBulb.id)}
+                                    class="block w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-sky-500/15 hover:text-sky-200 transition-colors"
+                                    title="Draw a points outline inside this lamp — the enclosed area is cut out of it">
+                              ✂ Cut hole (draw points)
+                            </button>
+                          {/if}
                           <div class="border-t border-white/5 my-1"></div>
                           {#if menuBulb.origin === "authored" && !menuBulb.kept}
                             <button type="button" onclick={() => restoreBulb(menuBulb.id)}
@@ -5180,12 +5264,17 @@
                   <div class="flex items-center rounded overflow-hidden border border-white/10"
                        title="Lamp draw tool: Wand flood-fills at the click; Points lets you click out any outline (triangle, star, …) — click the first point again to close it">
                     <button type="button"
-                            onclick={() => { genB2sDrawMode = "wand"; genB2sPolyPoints = []; }}
+                            onclick={() => { genB2sDrawMode = "wand"; genB2sPolyPoints = []; genB2sPolyLoops = []; genB2sPolyTarget = null; }}
                             class="text-[11px] px-2 py-1 transition-colors {genB2sDrawMode === 'wand' ? 'bg-amber-400/25 text-amber-100' : 'bg-white/5 text-zinc-400 hover:bg-white/10'}">✦ Wand</button>
                     <button type="button"
-                            onclick={() => { genB2sDrawMode = "poly"; genB2sPolyPoints = []; genB2sStatus = "Points mode — click the outline corners, click the 1st point again to close"; }}
+                            onclick={() => { genB2sDrawMode = "poly"; genB2sPolyPoints = []; genB2sPolyLoops = []; genB2sPolyTarget = null; genB2sStatus = "Points mode — click the outline corners, click the 1st point again to close a loop"; }}
                             class="text-[11px] px-2 py-1 transition-colors {genB2sDrawMode === 'poly' ? 'bg-sky-400/25 text-sky-100' : 'bg-white/5 text-zinc-400 hover:bg-white/10'}">△ Points</button>
                   </div>
+                  {#if genB2sDrawMode === "poly" && (genB2sPolyLoops.length > 0 || genB2sPolyPoints.length >= 3)}
+                    <button type="button" onclick={finishPolyLamp}
+                            class="text-[11px] px-2 py-1 rounded bg-emerald-400/20 text-emerald-100 border border-emerald-400/50 hover:bg-emerald-400/30 transition-colors"
+                            title={genB2sPolyTarget !== null ? "Cut the drawn outline(s) out of the selected lamp (Enter)" : "Create ONE lamp from all drawn loops (Enter). A loop inside another is a hole; a separate loop is a second lit area."}>{genB2sPolyTarget !== null ? "✂ Cut" : "✓ Done"}{genB2sPolyLoops.length > 0 ? ` (${genB2sPolyLoops.length + (genB2sPolyPoints.length >= 3 ? 1 : 0)} loops)` : ""}</button>
+                  {/if}
                   <button
                     type="button"
                     onclick={() => (genB2sPreviewAnim = !genB2sPreviewAnim)}
