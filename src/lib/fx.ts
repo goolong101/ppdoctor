@@ -956,6 +956,21 @@ export const OVERLAY_LIBRARY: FxOverlayAsset[] = [
     frameW: 300, frameH: 800,
     json: { frames: { cols: 5, rows: 1, count: 5, fps: 0, random: true }, blend: "add", alpha: 1.0,
             trigger: "MSG_JACKPOT", duration_ms: 180, fade_ms: 60 } },
+  { id: "explosion", label: "Explosion (fireball)", file: "fx/explosion_sheet.png", staticUrl: "/fx/explosion_sheet.png",
+    frameW: 256, frameH: 308,
+    // One-shot: 30 frames @16fps ≈ 1.9s — default trigger plays it through once.
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 16 }, blend: "add", alpha: 1.0, pivot: [0.5, 0.6],
+            trigger: "MSG_JACKPOT", duration_ms: 1900, fade_ms: 250 } },
+  { id: "explosion2", label: "Explosion (bomb + smoke)", file: "fx/explosion2_sheet.png", staticUrl: "/fx/explosion2_sheet.png",
+    frameW: 256, frameH: 308,
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 10 }, blend: "add", alpha: 1.0, pivot: [0.5, 0.6],
+            trigger: "MSG_MULTIBALL", duration_ms: 3000, fade_ms: 300 } },
+  { id: "fireworks", label: "Fireworks (purple bursts)", file: "fx/fireworks_sheet.png", staticUrl: "/fx/fireworks_sheet.png",
+    frameW: 320, frameH: 150,
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 12 }, blend: "add", alpha: 0.95 } },
+  { id: "fireworks2", label: "Fireworks (gold finale)", file: "fx/fireworks2_sheet.png", staticUrl: "/fx/fireworks2_sheet.png",
+    frameW: 320, frameH: 167,
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 12 }, blend: "add", alpha: 0.95 } },
 ];
 
 /** Preset ids sorted by display label for the panel dropdown. */
