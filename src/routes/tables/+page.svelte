@@ -3415,6 +3415,10 @@
    *  Either way, "Detect lamps" in the toolbar can optionally append
    *  scaffold_b2s_from_png.py results to the current set. */
   async function openB2sEditorForVideo() {
+    // The lamp editor owns the preview pointer; layer editing is gated on it
+    // being closed. Keep the tab state in sync so opening the editor from
+    // the header while on Layers can't silently disable the layer handles.
+    b2sPanelTab = "lamps";
     if (genB2sBusy) return;
     const folder = selected?.folder;
     const tableId = selected?.id;
@@ -3495,6 +3499,7 @@
    *  art directly. Saves to a sidecar default_image/backglass_PP.directb2s
    *  — the authored backglass.directb2s is never clobbered. */
   async function openB2sEditorForDefault() {
+    b2sPanelTab = "lamps";   // keep tab in sync (see openB2sEditorForVideo)
     if (genB2sBusy) return;
     const folder = selected?.folder;
     const tableId = selected?.id;
