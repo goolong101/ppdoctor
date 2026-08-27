@@ -1074,6 +1074,55 @@ export const OVERLAY_LIBRARY: FxOverlayAsset[] = [
   { id: "meteor", label: "Shooting star fly-across", file: "fx/meteor_sheet.png", staticUrl: "/fx/meteor_sheet.png",
     frameW: 320, frameH: 180,
     json: { frames: { cols: 6, rows: 5, count: 30, fps: 15 }, blend: "add", alpha: 1.0 } },
+
+  { id: "spaceburst", label: "Explosion (space, energy ring)", file: "fx/spaceburst_sheet.png", staticUrl: "/fx/spaceburst_sheet.png",
+    frameW: 256, frameH: 256,
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 15 }, blend: "add", alpha: 1.0,
+            trigger: "MSG_JACKPOT", duration_ms: 2000, fade_ms: 150 } },
+  { id: "waterburst", label: "Explosion (underwater, bubbles)", file: "fx/waterburst_sheet.png", staticUrl: "/fx/waterburst_sheet.png",
+    frameW: 256, frameH: 256,
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 12 }, blend: "add", alpha: 1.0,
+            trigger: "MSG_JACKPOT", duration_ms: 2500, fade_ms: 250 } },
+  { id: "eyes1", label: "Blinking eye 1 (almond, neutral)", file: "fx/eyes1_sheet.png", staticUrl: "/fx/eyes1_sheet.png",
+    frameW: 160, frameH: 100,
+    // Transparent alpha overlay (normal blend) — place over a character's
+    // painted eye; invisible except a quick blink every 2.5s.
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 12 }, blend: "blend", alpha: 1.0 } },
+  { id: "eyes1pair", label: "Blinking eyes 1 pair (almond, neutral)", file: "fx/eyes1pair_sheet.png", staticUrl: "/fx/eyes1pair_sheet.png",
+    frameW: 240, frameH: 80,
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 12 }, blend: "blend", alpha: 1.0 } },
+  { id: "eyes2", label: "Blinking eye 2 (round, short lashes)", file: "fx/eyes2_sheet.png", staticUrl: "/fx/eyes2_sheet.png",
+    frameW: 160, frameH: 100,
+    // Transparent alpha overlay (normal blend) — place over a character's
+    // painted eye; invisible except a quick blink every 2.5s.
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 12 }, blend: "blend", alpha: 1.0 } },
+  { id: "eyes2pair", label: "Blinking eyes 2 pair (round, short lashes)", file: "fx/eyes2pair_sheet.png", staticUrl: "/fx/eyes2pair_sheet.png",
+    frameW: 240, frameH: 80,
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 12 }, blend: "blend", alpha: 1.0 } },
+  { id: "eyes3", label: "Blinking eye 3 (feminine, long lashes)", file: "fx/eyes3_sheet.png", staticUrl: "/fx/eyes3_sheet.png",
+    frameW: 160, frameH: 100,
+    // Transparent alpha overlay (normal blend) — place over a character's
+    // painted eye; invisible except a quick blink every 2.5s.
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 12 }, blend: "blend", alpha: 1.0 } },
+  { id: "eyes3pair", label: "Blinking eyes 3 pair (feminine, long lashes)", file: "fx/eyes3pair_sheet.png", staticUrl: "/fx/eyes3pair_sheet.png",
+    frameW: 240, frameH: 80,
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 12 }, blend: "blend", alpha: 1.0 } },
+  { id: "eyes4", label: "Blinking eye 4 (narrow, masculine)", file: "fx/eyes4_sheet.png", staticUrl: "/fx/eyes4_sheet.png",
+    frameW: 160, frameH: 100,
+    // Transparent alpha overlay (normal blend) — place over a character's
+    // painted eye; invisible except a quick blink every 2.5s.
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 12 }, blend: "blend", alpha: 1.0 } },
+  { id: "eyes4pair", label: "Blinking eyes 4 pair (narrow, masculine)", file: "fx/eyes4pair_sheet.png", staticUrl: "/fx/eyes4pair_sheet.png",
+    frameW: 240, frameH: 80,
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 12 }, blend: "blend", alpha: 1.0 } },
+  { id: "eyes5", label: "Blinking eye 5 (feline, slanted)", file: "fx/eyes5_sheet.png", staticUrl: "/fx/eyes5_sheet.png",
+    frameW: 160, frameH: 100,
+    // Transparent alpha overlay (normal blend) — place over a character's
+    // painted eye; invisible except a quick blink every 2.5s.
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 12 }, blend: "blend", alpha: 1.0 } },
+  { id: "eyes5pair", label: "Blinking eyes 5 pair (feline, slanted)", file: "fx/eyes5pair_sheet.png", staticUrl: "/fx/eyes5pair_sheet.png",
+    frameW: 240, frameH: 80,
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 12 }, blend: "blend", alpha: 1.0 } },
 ];
 
 /** Preset ids sorted by display label for the panel dropdown. */
