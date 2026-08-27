@@ -2867,6 +2867,14 @@
         if (bulbs.length === 0) return;
         // Guard against the user navigating away during the async load.
         if (selected?.id !== tableId) return;
+        // The Layers tab owns the preview pointer for particle/overlay/glow
+        // editing — auto-activating the lamp editor here would silently
+        // steal clicks and hide the layer handles (live-hit 2026-08-27).
+        // Switching to the Lamps tab opens the editor explicitly instead.
+        if (b2sPanelTab === "layers") {
+          log("[b2s-from-video]", "auto-load skipped: Layers tab active (lamp preview would steal the pointer)");
+          return;
+        }
         // Adopt source dims from the .directb2s so percent calculations
         // for bulb positions land on the actual art. PP Doctor's own video
         // outputs are 1920×1080, but VPU/scaffold imports may differ.
