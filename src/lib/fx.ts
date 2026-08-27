@@ -1066,6 +1066,14 @@ export const OVERLAY_LIBRARY: FxOverlayAsset[] = [
     frameW: 320, frameH: 107,
     json: { frames: { cols: 6, rows: 5, count: 30, fps: 12 }, blend: "add", alpha: 0.95,
             trigger: "MSG_JACKPOT", duration_ms: 4000, fade_ms: 400 } },
+
+  { id: "asteroid", label: "Asteroid fly-across (burning)", file: "fx/asteroid_sheet.png", staticUrl: "/fx/asteroid_sheet.png",
+    frameW: 320, frameH: 180,
+    // One crossing per 2s cycle; loops cleanly (enters/exits off-screen).
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 15 }, blend: "add", alpha: 1.0 } },
+  { id: "meteor", label: "Shooting star fly-across", file: "fx/meteor_sheet.png", staticUrl: "/fx/meteor_sheet.png",
+    frameW: 320, frameH: 180,
+    json: { frames: { cols: 6, rows: 5, count: 30, fps: 15 }, blend: "add", alpha: 1.0 } },
 ];
 
 /** Preset ids sorted by display label for the panel dropdown. */
