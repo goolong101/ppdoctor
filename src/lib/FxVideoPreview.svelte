@@ -13,6 +13,10 @@
     onFxOverlayMove = null,
     onFxOverlayResize = null,
     onFxOverlayQuad = null,
+    fxSelected = -1,
+    fxEditArea = false,
+    onFxArea = null,
+    onFxQuad = null,
     fxGlowSelected = -1,
     onFxGlowMove = null,
   }: {
@@ -23,6 +27,12 @@
     onFxOverlayMove?: ((index: number, x: number, y: number) => void) | null;
     onFxOverlayResize?: ((index: number, w: number, h: number) => void) | null;
     onFxOverlayQuad?: ((index: number, quad: [number, number][]) => void) | null;
+    /** Selected particle emitter (index into fxDoc.particles), -1 = none. */
+    fxSelected?: number;
+    /** When true, the next drag draws the selected emitter's area rectangle. */
+    fxEditArea?: boolean;
+    onFxArea?: ((index: number, area: [number, number, number, number]) => void) | null;
+    onFxQuad?: ((index: number, quad: [number, number][]) => void) | null;
     fxGlowSelected?: number;
     onFxGlowMove?: ((index: number, x: number, y: number) => void) | null;
   } = $props();
@@ -48,8 +58,28 @@
     return { x: (px - geom.ox) / geom.fit, y: (py - geom.oy) / geom.fit };
   }
   let ovQuadDrag: { idx: number; corner: number } | null = null;
+  let quadDrag: { idx: number; corner: number; q: { x: number; y: number }[] } | null = null;
+  let fxDrag: { x0: number; y0: number; x1: number; y1: number } | null = null;
   function pDown(e: PointerEvent) {
     const p = toLogical(e); if (!p) return;
+    // Particle emitter editing (mirrors B2SCanvas): trapezoid corner drag,
+    // or draw a new area rectangle when the panel armed fxEditArea.
+    if (fxSelected >= 0) {
+      const q = sim.emitterQuad(fxSelected);
+      const hsq = HANDLE / geom.fit;
+      if (q) {
+        for (let k = 0; k < 4; k++) {
+          if (Math.abs(p.x - q[k].x) <= hsq && Math.abs(p.y - q[k].y) <= hsq) {
+            quadDrag = { idx: fxSelected, corner: k, q: q.map(c => ({ x: c.x, y: c.y })) };
+            (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); e.preventDefault(); return;
+          }
+        }
+      }
+      if (fxEditArea) {
+        fxDrag = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+        (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); e.preventDefault(); return;
+      }
+    }
     if (fxGlowSelected >= 0) {
       const g = sim.glowCenter(fxGlowSelected);
       if (g && Math.abs(p.x - g.x) <= Math.max(24, g.rx) && Math.abs(p.y - g.y) <= Math.max(24, g.ry)) {
@@ -82,6 +112,8 @@
   function pMove(e: PointerEvent) {
     const p = toLogical(e); if (!p) return;
     if (glowDrag) { sim.setGlowPos(glowDrag.idx, p.x, p.y); return; }
+    if (quadDrag) { quadDrag.q[quadDrag.corner] = { x: p.x, y: p.y }; return; }
+    if (fxDrag) { fxDrag.x1 = p.x; fxDrag.y1 = p.y; return; }
     if (ovQuadDrag) { sim.setOverlayQuadCorner(ovQuadDrag.idx, ovQuadDrag.corner, p.x, p.y); return; }
     if (ovResize) {
       let w = Math.max(4, p.x - ovResize.x0), h = Math.max(4, p.y - ovResize.y0);
@@ -94,6 +126,18 @@
   function pUp(e: PointerEvent) {
     const p = toLogical(e);
     if (glowDrag) { const d = glowDrag; glowDrag = null; if (p) onFxGlowMove?.(d.idx, Math.round(p.x), Math.round(p.y)); return; }
+    if (quadDrag) {
+      const d = quadDrag; quadDrag = null;
+      onFxQuad?.(d.idx, d.q.map(c => [Math.round(c.x), Math.round(c.y)] as [number, number]));
+      return;
+    }
+    if (fxDrag) {
+      const d = fxDrag; fxDrag = null;
+      const x = Math.min(d.x0, d.x1), y = Math.min(d.y0, d.y1);
+      const w = Math.abs(d.x1 - d.x0), h = Math.abs(d.y1 - d.y0);
+      onFxArea?.(fxSelected, [Math.round(x), Math.round(y), Math.round(w), Math.round(h)]);
+      return;
+    }
     if (ovQuadDrag) {
       const d = ovQuadDrag; ovQuadDrag = null;
       const q = sim.overlayQuad(d.idx);
@@ -135,8 +179,32 @@
         ctx.restore();
       }
     }
+    if (fxSelected >= 0) {
+      ctx.save();
+      ctx.lineWidth = 2 / geom.fit;
+      ctx.setLineDash([8 / geom.fit, 6 / geom.fit]);
+      ctx.strokeStyle = "rgba(251,191,36,0.9)";
+      if (fxDrag) {
+        ctx.strokeRect(Math.min(fxDrag.x0, fxDrag.x1), Math.min(fxDrag.y0, fxDrag.y1),
+                       Math.abs(fxDrag.x1 - fxDrag.x0), Math.abs(fxDrag.y1 - fxDrag.y0));
+      } else if (quadDrag || sim.emitterQuad(fxSelected)) {
+        const q = quadDrag ? quadDrag.q : sim.emitterQuad(fxSelected)!;
+        ctx.beginPath(); ctx.moveTo(q[0].x, q[0].y);
+        for (let k = 1; k < 4; k++) ctx.lineTo(q[k].x, q[k].y);
+        ctx.closePath(); ctx.stroke();
+        const hs = HANDLE / geom.fit;
+        ctx.setLineDash([]); ctx.fillStyle = "rgba(251,191,36,0.95)";
+        for (let k = 0; k < 4; k++) ctx.fillRect(q[k].x - hs / 2, q[k].y - hs / 2, hs, hs);
+      } else {
+        const a2 = sim.emitterArea(fxSelected);
+        if (a2) ctx.strokeRect(a2.x, a2.y, a2.w, a2.h);
+        const pt = sim.emitterPoint(fxSelected);
+        if (pt) { ctx.setLineDash([]); ctx.beginPath(); ctx.arc(pt.x, pt.y, 10 / geom.fit, 0, Math.PI * 2); ctx.stroke(); }
+      }
+      ctx.restore();
+    }
   }
-  let editing = $derived(fxOverlaySelected >= 0 || fxGlowSelected >= 0);
+  let editing = $derived(fxOverlaySelected >= 0 || fxGlowSelected >= 0 || fxSelected >= 0);
 
   function frame(now: number) {
     raf = requestAnimationFrame(frame);

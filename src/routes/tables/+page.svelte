@@ -4764,6 +4764,10 @@
                         onFxOverlayMove={(i, x, y) => { const o = fxCurrent.overlays[i]; if (o) { const r = o.rect ?? [0, 0, 0, 0]; o.rect = [x, y, r[2], r[3]]; } }}
                         onFxOverlayResize={(i, w, h) => { const o = fxCurrent.overlays[i]; if (o) { const r = o.rect ?? [0, 0, 0, 0]; o.rect = [r[0], r[1], w, h]; } }}
                         onFxOverlayQuad={(i, q) => { const o = fxCurrent.overlays[i]; if (o) o.quad = q as [number, number][]; }}
+                        fxSelected={b2sPanelTab === "layers" && !genB2sActive ? fxSelected : -1}
+                        fxEditArea={b2sPanelTab === "layers" && !genB2sActive && fxEditArea}
+                        onFxArea={(i, area) => { if (fxCurrent.particles[i]) { fxCurrent.particles[i].area = area; } fxEditArea = false; }}
+                        onFxQuad={(i, quad) => { const p = fxCurrent.particles[i]; if (p) { p.quad = quad as any; delete p.area; } }}
                         fxGlowSelected={b2sPanelTab === "layers" && !genB2sActive ? fxGlowSel : -1}
                         onFxGlowMove={(i, x, y) => { const g = fxCurrent.glows[i]; if (g) { g.x = x; g.y = y; } }} />
 
