@@ -31,6 +31,7 @@
     fxEditArea = false,
     onFxArea = null,
     onFxQuad = null,
+    onFxOverlayQuad = null,
     fxOverlaySelected = -1,
     onFxOverlayMove = null,
     onFxOverlayResize = null,
@@ -62,6 +63,7 @@
     onFxArea?: ((index: number, area: [number, number, number, number]) => void) | null;
     /** Trapezoid corner dragged → new quad (source px, TL TR BR BL). */
     onFxQuad?: ((index: number, quad: [number, number][]) => void) | null;
+    onFxOverlayQuad?: ((index: number, quad: [number, number][]) => void) | null;
     /** Selected overlay (index into fxDoc.overlays): outlined, and draggable on the preview. */
     fxOverlaySelected?: number;
     onFxOverlayMove?: ((index: number, x: number, y: number) => void) | null;
@@ -198,6 +200,7 @@
   let glowDrag: { idx: number; x: number; y: number } | null = null;
   /** Trapezoid corner drag in progress: which corner, current quad (logical px). */
   let quadDrag: { idx: number; corner: number; q: { x: number; y: number }[] } | null = null;
+  let ovQuadDrag: { idx: number; corner: number } | null = null;
   /** Overlay resize in progress (bottom-right handle). */
   let ovResize: { idx: number; x0: number; y0: number; w: number; h: number; aspect: number } | null = null;
   const HANDLE = 14;   // canvas px
@@ -248,7 +251,18 @@
     if (fxOverlaySelected >= 0) {
       const r = fxSim.overlayRect(fxOverlaySelected);
       const hs = HANDLE / geom.fit;   // handle size in logical px
-      if (r && Math.abs(p.x - (r.x + r.w)) <= hs && Math.abs(p.y - (r.y + r.h)) <= hs) {
+      const oq = fxSim.overlayQuad(fxOverlaySelected);
+      if (oq) {
+        for (let k = 0; k < 4; k++) {
+          if (Math.abs(p.x - oq[k].x) <= hs && Math.abs(p.y - oq[k].y) <= hs) {
+            ovQuadDrag = { idx: fxOverlaySelected, corner: k };
+            (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+            e.preventDefault();
+            return;
+          }
+        }
+      }
+      if (!oq && r && Math.abs(p.x - (r.x + r.w)) <= hs && Math.abs(p.y - (r.y + r.h)) <= hs) {
         ovResize = { idx: fxOverlaySelected, x0: r.x, y0: r.y, w: r.w, h: r.h, aspect: r.w / Math.max(1, r.h) };
         (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
         e.preventDefault();
@@ -270,6 +284,7 @@
     const p = toLogical(e); if (!p) return;
     if (glowDrag) { glowDrag.x = p.x; glowDrag.y = p.y; fxSim.setGlowPos(glowDrag.idx, p.x, p.y); return; }
     if (quadDrag) { quadDrag.q[quadDrag.corner] = { x: p.x, y: p.y }; return; }
+    if (ovQuadDrag) { fxSim.setOverlayQuadCorner(ovQuadDrag.idx, ovQuadDrag.corner, p.x, p.y); return; }
     if (ovResize) {
       let w = Math.max(4, p.x - ovResize.x0), h = Math.max(4, p.y - ovResize.y0);
       if (e.shiftKey) h = w / ovResize.aspect;
@@ -294,6 +309,12 @@
     if (quadDrag) {
       const d = quadDrag; quadDrag = null;
       onFxQuad?.(d.idx, d.q.map(c => [Math.round(c.x / geom.sx), Math.round(c.y / geom.sy)] as [number, number]));
+      return;
+    }
+    if (ovQuadDrag) {
+      const d = ovQuadDrag; ovQuadDrag = null;
+      const q = fxSim.overlayQuad(d.idx);
+      if (q) onFxOverlayQuad?.(d.idx, q.map(c => [Math.round(c.x / geom.sx), Math.round(c.y / geom.sy)] as [number, number]));
       return;
     }
     if (ovResize) {
@@ -332,8 +353,20 @@
       }
     }
     if (fxOverlaySelected >= 0) {
+      const oq = fxSim.overlayQuad(fxOverlaySelected);
       const r = fxSim.overlayRect(fxOverlaySelected);
-      if (r) {
+      if (oq) {
+        ctx.save();
+        ctx.lineWidth = 2 / geom.fit; ctx.setLineDash([6 / geom.fit, 4 / geom.fit]);
+        ctx.strokeStyle = "rgba(56,189,248,0.9)";
+        ctx.beginPath(); ctx.moveTo(oq[0].x, oq[0].y);
+        for (let k = 1; k < 4; k++) ctx.lineTo(oq[k].x, oq[k].y);
+        ctx.closePath(); ctx.stroke();
+        const hs = HANDLE / geom.fit;
+        ctx.setLineDash([]); ctx.fillStyle = "rgba(56,189,248,0.95)";
+        for (let k = 0; k < 4; k++) ctx.fillRect(oq[k].x - hs / 2, oq[k].y - hs / 2, hs, hs);
+        ctx.restore();
+      } else if (r) {
         ctx.save();
         ctx.lineWidth = 2 / geom.fit; ctx.setLineDash([6 / geom.fit, 4 / geom.fit]);
         ctx.strokeStyle = "rgba(56,189,248,0.9)";   // sky — overlays; amber = particle areas

@@ -630,6 +630,12 @@
             {/if}
           </div>
         {/if}
+        <button type="button"
+                onclick={() => { if (ocur!.quad) { delete ocur!.quad; } else { const r = ocur!.rect ?? [660, 340, 600, 400]; ocur!.quad = [[r[0], r[1]], [r[0] + r[2], r[1]], [r[0] + r[2], r[1] + r[3]], [r[0], r[1] + r[3]]]; } }}
+                class="w-full text-[11px] px-2 py-1 rounded border transition-colors {ocur.quad ? 'bg-sky-400/20 text-sky-100 border-sky-400/50' : 'bg-white/5 text-zinc-300 border-white/10 hover:bg-white/10'}"
+                title="Free-corner placement: stretch the overlay onto any trapezoid by dragging its 4 corner handles in the preview — e.g. matching eyes to an angled face">
+          {ocur.quad ? "◇ Corners ON — drag the 4 handles (click to reset to rectangle)" : "◇ Free corners (trapezoid)"}
+        </button>
         <div class="grid grid-cols-4 gap-1">
           {#each ["x", "y", "w", "h"] as k, i}
             <label class="text-[9px] text-zinc-500">{k}

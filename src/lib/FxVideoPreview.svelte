@@ -12,6 +12,7 @@
     fxOverlaySelected = -1,
     onFxOverlayMove = null,
     onFxOverlayResize = null,
+    onFxOverlayQuad = null,
     fxGlowSelected = -1,
     onFxGlowMove = null,
   }: {
@@ -21,6 +22,7 @@
     fxOverlaySelected?: number;
     onFxOverlayMove?: ((index: number, x: number, y: number) => void) | null;
     onFxOverlayResize?: ((index: number, w: number, h: number) => void) | null;
+    onFxOverlayQuad?: ((index: number, quad: [number, number][]) => void) | null;
     fxGlowSelected?: number;
     onFxGlowMove?: ((index: number, x: number, y: number) => void) | null;
   } = $props();
@@ -45,6 +47,7 @@
     const py = (e.clientY - r.top) * (canvas.height / r.height);
     return { x: (px - geom.ox) / geom.fit, y: (py - geom.oy) / geom.fit };
   }
+  let ovQuadDrag: { idx: number; corner: number } | null = null;
   function pDown(e: PointerEvent) {
     const p = toLogical(e); if (!p) return;
     if (fxGlowSelected >= 0) {
@@ -57,7 +60,16 @@
     if (fxOverlaySelected >= 0) {
       const r = sim.overlayRect(fxOverlaySelected);
       const hs = HANDLE / geom.fit;
-      if (r && Math.abs(p.x - (r.x + r.w)) <= hs && Math.abs(p.y - (r.y + r.h)) <= hs) {
+      const oq = sim.overlayQuad(fxOverlaySelected);
+      if (oq) {
+        for (let k = 0; k < 4; k++) {
+          if (Math.abs(p.x - oq[k].x) <= hs && Math.abs(p.y - oq[k].y) <= hs) {
+            ovQuadDrag = { idx: fxOverlaySelected, corner: k };
+            (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); e.preventDefault(); return;
+          }
+        }
+      }
+      if (!oq && r && Math.abs(p.x - (r.x + r.w)) <= hs && Math.abs(p.y - (r.y + r.h)) <= hs) {
         ovResize = { idx: fxOverlaySelected, x0: r.x, y0: r.y, w: r.w, h: r.h, aspect: r.w / Math.max(1, r.h) };
         (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); e.preventDefault(); return;
       }
@@ -70,6 +82,7 @@
   function pMove(e: PointerEvent) {
     const p = toLogical(e); if (!p) return;
     if (glowDrag) { sim.setGlowPos(glowDrag.idx, p.x, p.y); return; }
+    if (ovQuadDrag) { sim.setOverlayQuadCorner(ovQuadDrag.idx, ovQuadDrag.corner, p.x, p.y); return; }
     if (ovResize) {
       let w = Math.max(4, p.x - ovResize.x0), h = Math.max(4, p.y - ovResize.y0);
       if (e.shiftKey) h = w / ovResize.aspect;
@@ -81,6 +94,12 @@
   function pUp(e: PointerEvent) {
     const p = toLogical(e);
     if (glowDrag) { const d = glowDrag; glowDrag = null; if (p) onFxGlowMove?.(d.idx, Math.round(p.x), Math.round(p.y)); return; }
+    if (ovQuadDrag) {
+      const d = ovQuadDrag; ovQuadDrag = null;
+      const q = sim.overlayQuad(d.idx);
+      if (q) onFxOverlayQuad?.(d.idx, q.map(c => [Math.round(c.x), Math.round(c.y)] as [number, number]));
+      return;
+    }
     if (ovResize) { const d = ovResize; ovResize = null; onFxOverlayResize?.(d.idx, Math.round(d.w), Math.round(d.h)); return; }
     if (ovDrag) { const d = ovDrag; ovDrag = null; onFxOverlayMove?.(d.idx, Math.round(d.x), Math.round(d.y)); }
   }
@@ -94,8 +113,19 @@
       }
     }
     if (fxOverlaySelected >= 0) {
+      const oq = sim.overlayQuad(fxOverlaySelected);
       const r = sim.overlayRect(fxOverlaySelected);
-      if (r) {
+      if (oq) {
+        ctx.save(); ctx.lineWidth = 2 / geom.fit; ctx.setLineDash([6 / geom.fit, 4 / geom.fit]);
+        ctx.strokeStyle = "rgba(56,189,248,0.9)";
+        ctx.beginPath(); ctx.moveTo(oq[0].x, oq[0].y);
+        for (let k = 1; k < 4; k++) ctx.lineTo(oq[k].x, oq[k].y);
+        ctx.closePath(); ctx.stroke();
+        const hs = HANDLE / geom.fit;
+        ctx.setLineDash([]); ctx.fillStyle = "rgba(56,189,248,0.95)";
+        for (let k = 0; k < 4; k++) ctx.fillRect(oq[k].x - hs / 2, oq[k].y - hs / 2, hs, hs);
+        ctx.restore();
+      } else if (r) {
         ctx.save(); ctx.lineWidth = 2 / geom.fit; ctx.setLineDash([6 / geom.fit, 4 / geom.fit]);
         ctx.strokeStyle = "rgba(56,189,248,0.9)";
         ctx.strokeRect(r.x, r.y, r.w, r.h);

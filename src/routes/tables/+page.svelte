@@ -4763,6 +4763,7 @@
                         fxOverlaySelected={b2sPanelTab === "layers" && !genB2sActive ? fxOverlaySel : -1}
                         onFxOverlayMove={(i, x, y) => { const o = fxCurrent.overlays[i]; if (o) { const r = o.rect ?? [0, 0, 0, 0]; o.rect = [x, y, r[2], r[3]]; } }}
                         onFxOverlayResize={(i, w, h) => { const o = fxCurrent.overlays[i]; if (o) { const r = o.rect ?? [0, 0, 0, 0]; o.rect = [r[0], r[1], w, h]; } }}
+                        onFxOverlayQuad={(i, q) => { const o = fxCurrent.overlays[i]; if (o) o.quad = q as [number, number][]; }}
                         fxGlowSelected={b2sPanelTab === "layers" && !genB2sActive ? fxGlowSel : -1}
                         onFxGlowMove={(i, x, y) => { const g = fxCurrent.glows[i]; if (g) { g.x = x; g.y = y; } }} />
 
@@ -4812,6 +4813,7 @@
                         onFxGlowMove={(i, x, y) => { const g = fxCurrent.glows[i]; if (g) { g.x = x; g.y = y; } }}
                         onFxOverlayMove={(i, x, y) => { const o = fxCurrent.overlays[i]; if (o) { const r = o.rect ?? [0, 0, 0, 0]; o.rect = [x, y, r[2], r[3]]; } }}
                         onFxOverlayResize={(i, w, h) => { const o = fxCurrent.overlays[i]; if (o) { const r = o.rect ?? [0, 0, 0, 0]; o.rect = [r[0], r[1], w, h]; } }}
+                        onFxOverlayQuad={(i, q) => { const o = fxCurrent.overlays[i]; if (o) o.quad = q as [number, number][]; }}
                         fxImageResolver={fxResolveImage}
                       />
                       <!-- Editor overlay on top of B2SCanvas — same lamp

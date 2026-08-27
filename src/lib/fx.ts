@@ -88,6 +88,8 @@ export interface FxOverlayJson {
   trigger?: string | string[];
   /** Event(s) that END the overlay — e.g. show till MSG_MULTIBALL_END. */
   until?: string | string[];
+  /** Free-corner placement TL,TR,BR,BL (source px) — trapezoid/perspective. */
+  quad?: [number, number][];
   duration_ms?: number;
   fade_ms?: number;
   delay_ms?: number;
@@ -319,6 +321,7 @@ interface Overlay {
   idle: boolean; triggers: string[]; until: string[]; durationMs: number; fadeMs: number; delayMs: number;
   pendingAt: number;
   activeUntil: number; activeSince: number; offX: number; offY: number; lastMs: number;
+  oquad: { x: number; y: number }[] | null;   // scaled free corners (TL,TR,BR,BL)
 }
 
 const PI = Math.PI;
@@ -452,7 +455,21 @@ export class FxSim {
   /** Screen-space rect of overlay i (with drift offset) for the editor. */
   overlayRect(i: number) { const o = this.overlays[i]; return o && o.img ? { x: o.dst.x + o.offX, y: o.dst.y + o.offY, w: o.dst.w, h: o.dst.h } : null; }
   /** Move overlay i (screen px) without reloading its texture. */
-  setOverlayPos(i: number, x: number, y: number) { const o = this.overlays[i]; if (o) { o.dst.x = x; o.dst.y = y; } }
+  setOverlayPos(i: number, x: number, y: number) {
+    const o = this.overlays[i]; if (!o) return;
+    const dx = x - o.dst.x, dy = y - o.dst.y;
+    if (o.oquad) for (const p of o.oquad) { p.x += dx; p.y += dy; }
+    o.dst.x = x; o.dst.y = y;
+  }
+  /** Free corners (TL,TR,BR,BL) incl. drift offset, or null when rect-placed. */
+  overlayQuad(i: number) { const o = this.overlays[i]; return o?.oquad ? o.oquad.map(p => ({ x: p.x + o.offX, y: p.y + o.offY })) : null; }
+  setOverlayQuadCorner(i: number, k: number, x: number, y: number) {
+    const o = this.overlays[i]; if (!o?.oquad || !o.oquad[k]) return;
+    o.oquad[k] = { x: x - o.offX, y: y - o.offY };
+    const xs = o.oquad.map(p => p.x), ys = o.oquad.map(p => p.y);
+    const mnx = Math.min(...xs), mny = Math.min(...ys);
+    o.dst = { x: mnx, y: mny, w: Math.max(1, Math.max(...xs) - mnx), h: Math.max(1, Math.max(...ys) - mny) };
+  }
   /** Resize overlay i (screen px) without reloading its texture. */
   setOverlaySize(i: number, w: number, h: number) { const o = this.overlays[i]; if (o) { o.dst.w = Math.max(4, w); o.dst.h = Math.max(4, h); } }
   emitterPoint(i: number) { const e = this.emitters[i]; return e && e.r.spawnMode === 5 ? { x: e.px, y: e.py } : null; }
@@ -537,6 +554,7 @@ export class FxSim {
         fadeMs: Math.max(0, Math.trunc(j.fade_ms ?? 300)),
         delayMs: Math.max(0, Math.trunc(j.delay_ms ?? 0)), pendingAt: 0,
         activeUntil: 0, activeSince: 0, offX: 0, offY: 0, lastMs: 0,
+        oquad: null,
       };
       o.frameCount = Math.min(o.frameCols * o.frameRows, Math.max(1, Math.trunc(j.frames?.count ?? o.frameCols * o.frameRows)));
       if (o.frameCount > 1) {
@@ -546,6 +564,7 @@ export class FxSim {
       }
       if (o.warp) o.cols = o.rows = 12;
       if (typeof j.mesh === "number") o.cols = o.rows = Math.min(MAX_MESH, Math.max(1, Math.trunc(j.mesh)));
+      if (j.quad && o.cols < 8) o.cols = o.rows = 8;
       const t = triggersOf(j.trigger, true); o.triggers = t.triggers; o.idle = t.idle;
       this.overlays.push(o);
       this.loadOverlayImage(o);
@@ -565,6 +584,13 @@ export class FxSim {
       const rw = r && r[2] > 0 ? r[2] : img.naturalWidth / o.frameCols;    // one frame
       const rh = r && r[3] > 0 ? r[3] : img.naturalHeight / o.frameRows;
       o.dst = { x: rx * this.sx, y: ry * this.sy, w: rw * this.sx, h: rh * this.sy };
+      const qj = o.j.quad;
+      if (Array.isArray(qj) && qj.length === 4 && qj.every(p => Array.isArray(p) && p.length === 2)) {
+        o.oquad = qj.map(p => ({ x: p[0] * this.sx, y: p[1] * this.sy }));
+        const xs = o.oquad.map(p => p.x), ys = o.oquad.map(p => p.y);
+        const mnx = Math.min(...xs), mny = Math.min(...ys);
+        o.dst = { x: mnx, y: mny, w: Math.max(1, Math.max(...xs) - mnx), h: Math.max(1, Math.max(...ys) - mny) };
+      }
       o.imgW = img.naturalWidth; o.imgH = img.naturalHeight;
       if (o.blend === "add") {
         // Preview-only luma key: the cabinet's SDL additive blend makes black
@@ -817,7 +843,15 @@ export class FxSim {
     const maxd = 0.5 * Math.sqrt(o.dst.w * o.dst.w + o.dst.h * o.dst.h);
     for (let rr = 0; rr <= rows; rr++) for (let cc = 0; cc <= cols; cc++) {
       const u = cc / cols, v = rr / rows;
-      const lx = o.dst.x + u * o.dst.w, ly = o.dst.y + v * o.dst.h;
+      let lx: number, ly: number;
+      if (o.oquad) {
+        const q = o.oquad;
+        const w00 = (1 - u) * (1 - v), w10 = u * (1 - v), w11 = u * v, w01 = (1 - u) * v;
+        lx = q[0].x * w00 + q[1].x * w10 + q[2].x * w11 + q[3].x * w01;
+        ly = q[0].y * w00 + q[1].y * w10 + q[2].y * w11 + q[3].y * w01;
+      } else {
+        lx = o.dst.x + u * o.dst.w; ly = o.dst.y + v * o.dst.h;
+      }
       let dxw = 0, dyw = 0;
       switch (o.warp) {
         case 1: dxw = o.warpAmp * Math.sin(v * o.warpFreq * 2 * PI + wphase) * (1 - v * o.pivotY); break;
